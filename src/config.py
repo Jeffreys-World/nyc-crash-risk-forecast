@@ -65,13 +65,23 @@ class SocrataSource:
     """One NYC Open Data resource.
 
     `where` is a SoQL filter applied server-side. Filtering at the API keeps the crash
-    pull to the years we model instead of the full ~2.2M-row history.
+    pull to the years we model instead of the full 2.27M-row history.
+
+    `select` narrows the columns server-side. The crash dataset has ~30 columns and
+    1.5M matching rows; pulling only the eight the model uses cuts the payload by
+    roughly three quarters and is the difference between a pull that finishes and one
+    that times out.
+
+    `is_geo` marks resources whose rows carry a `the_geom` GeoJSON object. Those are
+    converted to WKT at snapshot time so the parquet stays a plain table.
     """
 
     key: str
     dataset_id: str
     description: str
     where: str | None = None
+    select: str | None = None
+    is_geo: bool = False
 
     @property
     def url(self) -> str:
@@ -82,41 +92,80 @@ class SocrataSource:
 # opens, so the pull starts earlier than TRAIN_YEARS.
 PULL_START = "2016-01-01T00:00:00.000"
 
+CRASH_COLUMNS = (
+    "crash_date",
+    "latitude",
+    "longitude",
+    "borough",
+    "number_of_pedestrians_killed",
+    "number_of_pedestrians_injured",
+    "contributing_factor_vehicle_1",
+    "contributing_factor_vehicle_2",
+)
+
+# The four VZV/SIP resources below were originally pinned to their `map` IDs
+# (kdda-2wcy, 2nj7-jxah, wqhs-q6wd, 79sh-heg3). Those exist and report row counts, but
+# they are visualization canvases: `displayType: visualization_canvas_map`, zero
+# API-accessible columns, and every row returns `{}`. Each has a real `dataset` twin,
+# pinned here. Verifying that a dataset *exists* is not the same as verifying its data
+# can be read.
 SOURCES: dict[str, SocrataSource] = {
     "crashes": SocrataSource(
         key="crashes",
         dataset_id="h9gi-nx95",
         description="Motor Vehicle Collisions - Crashes",
         where=f"crash_date >= '{PULL_START}'",
+        select=", ".join(CRASH_COLUMNS),
     ),
     "vzv_corridors": SocrataSource(
         key="vzv_corridors",
-        dataset_id="kdda-2wcy",
-        description="Vision Zero priority corridors",
+        dataset_id="36nr-7fbp",
+        description="VZV Priority Corridors (199 segments, geometry only)",
+        is_geo=True,
     ),
     "vzv_intersections": SocrataSource(
         key="vzv_intersections",
-        dataset_id="2nj7-jxah",
-        description="Vision Zero priority intersections",
+        dataset_id="tmt9-43em",
+        description="VZV Priority Intersections (304 points)",
+        is_geo=True,
     ),
     "sip_corridors": SocrataSource(
         key="sip_corridors",
-        dataset_id="wqhs-q6wd",
-        description="Street Improvement Projects - corridors (treatment)",
+        dataset_id="if4c-w48d",
+        description="VZV Street Improvement Projects - corridors (treatment)",
+        is_geo=True,
     ),
     "sip_intersections": SocrataSource(
         key="sip_intersections",
-        dataset_id="79sh-heg3",
-        description="Street Improvement Projects - intersections (treatment)",
+        dataset_id="shr7-eqdc",
+        description="VZV Street Improvement Projects - intersections (treatment)",
+        is_geo=True,
     ),
 }
 
-# Centerline source is NOT yet pinned. Candidates are 3mf9-qshr, inkn-q76z, and DCP
-# LION (a Bytes download, not Socrata). Whichever is selected gets added to SOURCES
-# and recorded in the README with its vintage. Until then the pipeline raises rather
-# than guessing, so a placeholder can never silently become the published universe.
+# Pinned 2026-08-12 after schema inspection. `inkn-q76z` is the NYC DCP/DoITT street
+# Centerline: 122,244 segments, MultiLineString geometry, and crucially it carries
+# `boroughcode` and a precomputed `segmentlength` in feet, so borough and the exposure
+# term both come free rather than needing a separate spatial join.
+#
+# `3mf9-qshr` is the same Centerline data with zero API-accessible columns, the same
+# trap as the VZV map views. DCP LION was not needed once inkn-q76z proved sufficient,
+# and avoiding it keeps the pipeline to a single API rather than a manual Bytes
+# download that no reader could reproduce from a clone.
 CENTERLINE_CANDIDATES = ("3mf9-qshr", "inkn-q76z", "LION (DCP Bytes)")
-CENTERLINE_SOURCE: SocrataSource | None = None
+
+CENTERLINE_SOURCE: SocrataSource | None = SocrataSource(
+    key="centerline",
+    dataset_id="inkn-q76z",
+    description="NYC street Centerline (122,244 segments)",
+    is_geo=True,
+)
+
+# rw_type distinguishes road class. Type 1 is a normal street; the higher codes cover
+# highways, ramps, and bridges. This is the limited-access-highway signal the original
+# borough-gap finding turned on, so it is carried through as a feature rather than
+# discarded.
+ROADWAY_TYPE_STREET = "1"
 
 # --------------------------------------------------------------------------------------
 # Coordinate reference systems
@@ -171,6 +220,15 @@ BOROUGH_CUMULATIVE_SHARE = {
 }
 
 BOROUGHS = ("MANHATTAN", "BROOKLYN", "QUEENS", "BRONX", "STATEN ISLAND")
+
+# Centerline encodes borough as a numeric code.
+BOROUGH_CODES = {
+    "1": "MANHATTAN",
+    "2": "BRONX",
+    "3": "BROOKLYN",
+    "4": "QUEENS",
+    "5": "STATEN ISLAND",
+}
 
 # --------------------------------------------------------------------------------------
 # The pre-registered bar (README: "The bar, set in advance")

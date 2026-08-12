@@ -79,6 +79,9 @@ class TestFailureHandling:
         monkeypatch.setattr(pull_snapshots, "RAW_DIR", tmp_path)
         monkeypatch.setattr(pull_snapshots, "snapshot_dir", lambda when=None: tmp_path / "d")
         monkeypatch.setattr(pull_snapshots, "SOURCES", {"crashes": SOURCE})
+        # Pin state is a config decision, not this test's subject. Held at None so the
+        # test asserts failure handling rather than which sources happen to be pinned.
+        monkeypatch.setattr(pull_snapshots, "CENTERLINE_SOURCE", None)
 
         def boom(*args, **kwargs):
             raise SocrataError("pagination truncated")
@@ -94,6 +97,7 @@ class TestFailureHandling:
     def test_manifest_records_provenance(self, tmp_path, monkeypatch, patched):
         monkeypatch.setattr(pull_snapshots, "snapshot_dir", lambda when=None: tmp_path / "d")
         monkeypatch.setattr(pull_snapshots, "SOURCES", {"crashes": SOURCE})
+        monkeypatch.setattr(pull_snapshots, "CENTERLINE_SOURCE", None)
 
         assert pull_snapshots.main([]) == 0
 
@@ -101,8 +105,16 @@ class TestFailureHandling:
         assert manifest["total_rows"] == 5
         assert manifest["snapshot_date"] == "d"
         assert manifest["pulled_at"]
-        # The centerline is deliberately unpinned; the manifest has to admit it.
-        assert manifest["centerline_pinned"] is False
+
+    def test_manifest_records_the_centerline_pin(self, tmp_path, monkeypatch, patched):
+        """Provenance: a reader must be able to tell whether the universe was built."""
+        monkeypatch.setattr(pull_snapshots, "snapshot_dir", lambda when=None: tmp_path / "d")
+        monkeypatch.setattr(pull_snapshots, "SOURCES", {})
+        monkeypatch.setattr(pull_snapshots, "CENTERLINE_SOURCE", SOURCE)
+
+        assert pull_snapshots.main([]) == 0
+        manifest = json.loads((tmp_path / "d" / "manifest.json").read_text())
+        assert manifest["centerline_pinned"] is True
 
     def test_unknown_source_key_is_rejected(self, tmp_path, monkeypatch, patched):
         monkeypatch.setattr(pull_snapshots, "snapshot_dir", lambda when=None: tmp_path / "d")

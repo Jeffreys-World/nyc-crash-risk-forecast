@@ -27,6 +27,7 @@ from pathlib import Path
 
 import pandas as pd
 import requests
+from shapely.geometry import shape
 
 # Allow `python scripts/pull_snapshots.py` from the repo root without installing.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -47,6 +48,42 @@ MANIFEST_NAME = "manifest.json"
 
 def snapshot_dir(when: date | None = None) -> Path:
     return RAW_DIR / (when or date.today()).isoformat()
+
+
+def geojson_to_wkt(frame: pd.DataFrame, key: str) -> pd.DataFrame:
+    """Convert Socrata's `the_geom` GeoJSON objects into a WKT column.
+
+    Parquet has no native geometry type, and a column of nested dicts round-trips
+    badly. WKT keeps the snapshot a plain, portable table that any reader can open
+    without geospatial libraries, and `shapely.from_wkt` restores it exactly.
+
+    A feature whose geometry fails to parse is kept with a null geometry rather than
+    dropped, so the count in the manifest still matches what the API reported and the
+    loss shows up downstream as an explicit unmatched feature.
+    """
+    if "the_geom" not in frame.columns:
+        raise SocrataError(
+            f"{key}: expected a `the_geom` column on a geo source but found "
+            f"{list(frame.columns)[:8]}"
+        )
+
+    def _convert(value: object) -> str | None:
+        if not isinstance(value, dict):
+            return None
+        try:
+            return shape(value).wkt
+        except Exception:  # malformed geometry from the API
+            return None
+
+    frame = frame.copy()
+    frame["geometry_wkt"] = frame["the_geom"].map(_convert)
+    frame = frame.drop(columns=["the_geom"])
+
+    bad = int(frame["geometry_wkt"].isna().sum())
+    if bad:
+        log.warning("%s: %d row(s) had unparseable geometry; kept with null WKT", key, bad)
+
+    return frame
 
 
 def pull_one(
@@ -75,6 +112,9 @@ def pull_one(
     log.info("%s: pulling %s", source.key, source.dataset_id)
     rows = fetch_socrata(source, session=session, app_token=app_token)
     frame = pd.DataFrame.from_records(rows)
+
+    if source.is_geo:
+        frame = geojson_to_wkt(frame, source.key)
 
     # Write to a temp path first so an interrupted run cannot leave a truncated
     # parquet that a later `--force`-less run would happily treat as complete.

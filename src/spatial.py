@@ -513,7 +513,15 @@ def join_vzv_labels(
 def join_sip_treatment(
     universe: gpd.GeoDataFrame,
     sip_layers: list[gpd.GeoDataFrame],
-    date_column_candidates: tuple[str, ...] = ("completion_date", "comp_date", "date_complete"),
+    # `end_date` is what the live SIP datasets (if4c-w48d, shr7-eqdc) actually use.
+    # The other names were guesses made before the schema was inspected; they are kept
+    # so the fixture tests and any older extract still resolve.
+    date_column_candidates: tuple[str, ...] = (
+        "end_date",
+        "completion_date",
+        "comp_date",
+        "date_complete",
+    ),
     report: LabelJoinReport | None = None,
     buffer_ft: float = 50.0,
 ) -> tuple[gpd.GeoDataFrame, LabelJoinReport]:

@@ -139,6 +139,8 @@ def fetch_socrata(
         }
         if source.where:
             params["$where"] = source.where
+        if source.select:
+            params["$select"] = source.select
 
         page = _request_json(source.url, params, session, app_token)
         if not page:
