@@ -101,6 +101,12 @@ PROJECTED_UNIT = "us-ft"
 # jitter without letting a crash jump to a parallel street mid-block.
 MAX_JOIN_DISTANCE_FT = 150.0
 
+# A crash within this radius of an intersection node is treated as intersection-related
+# and assigned to the node rather than to the adjoining segment. This mirrors how crash
+# records are conventionally classified, and it matters because DOT's priority list
+# ranks corridors and intersections as separate universes with separate stopping rules.
+INTERSECTION_RADIUS_FT = 100.0
+
 # Coordinates NYC's feed emits for "no geocode." Real (0, 0) is in the Gulf of Guinea.
 NULL_ISLAND = (0.0, 0.0)
 
