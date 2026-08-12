@@ -1,5 +1,11 @@
 .DS_Store
 
+# Secrets. .env holds the real Socrata app token; .env.example is the committed
+# template and must never hold a real value.
+.env
+.env.*
+!.env.example
+
 # Raw snapshots are large and re-pullable; the aggregated intermediate is committed.
 data/raw/
 data/cache/
