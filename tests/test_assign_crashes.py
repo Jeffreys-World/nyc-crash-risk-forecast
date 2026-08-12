@@ -83,6 +83,29 @@ class TestAssignment:
         assert report.assigned_intersection == 1
         assert assigned["unit_type"].iloc[0] == "intersection"
 
+    def test_duplicate_index_labels_do_not_collapse_crashes(self, universe):
+        """Regression: ISSUE-001 — four crashes became two.
+
+        Found by /qa on 2026-08-12.
+        Report: .gstack/qa-reports/qa-report-nyc-crash-risk-forecast-2026-08-12.md
+
+        The two-stage handoff identifies crashes by index label. `pd.concat` of two
+        snapshot files without ignore_index=True produces repeated labels, and the
+        distinct crashes sharing a label were silently merged.
+        """
+        from tests.conftest import LATS, LONS, make_crash
+
+        rows = [make_crash(LONS[0] + 0.0005, LATS[0], "2023-01-01T00:00:00.000")] * 4
+        duplicated = pd.DataFrame(rows, index=[0, 0, 1, 1])
+
+        points, report = crashes_to_gdf(duplicated)
+        assigned, report = assign_crashes_to_units(points, universe, report)
+
+        assert report.total_input == 4
+        assert report.assigned == 4
+        assert len(assigned) == 4
+        report.validate()
+
     def test_validate_raises_when_records_vanish(self):
         report = AssignmentReport(total_input=10, assigned_corridor=3, missing_coords=1)
         with pytest.raises(SpatialJoinError, match="lost silently"):

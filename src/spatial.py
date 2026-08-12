@@ -383,6 +383,13 @@ def assign_crashes_to_units(
     assert_projected(crashes, "crashes")
     assert_projected(universe, "universe")
 
+    # The two-stage handoff identifies crashes by index label, so a non-unique index
+    # silently collapses distinct crashes into one. Concatenating two snapshot parquet
+    # files without ignore_index=True is enough to produce that, and the only thing
+    # that would catch it is the accounting check at the end. Reset here so the
+    # precondition is enforced rather than assumed.
+    crashes = crashes.reset_index(drop=True)
+
     nodes = universe[universe["unit_type"] == "intersection"]
     segments = universe[universe["unit_type"] == "corridor"]
 
