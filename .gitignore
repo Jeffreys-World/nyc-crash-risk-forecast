@@ -1,1 +1,17 @@
 .DS_Store
+
+# Raw snapshots are large and re-pullable; the aggregated intermediate is committed.
+data/raw/
+data/cache/
+!data/processed/
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+build/
+dist/
