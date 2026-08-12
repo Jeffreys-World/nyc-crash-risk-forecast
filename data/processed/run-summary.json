@@ -27,6 +27,9 @@
   "ci_excludes_zero": true,
   "clears_bar": true,
   "verdict": "lift +18.4pp with CI +17.5 to +19.3",
-  "treated_pp": 60.443944353518816,
-  "untreated_pp": 34.9269588313413
+  "treated_before_holdout_pp": 60.71467480117659,
+  "treated_during_holdout_pp": 56.28140703517588,
+  "untreated_pp": 34.9269588313413,
+  "treated_before_holdout_units": 57772,
+  "treated_during_holdout_units": 4092
 }

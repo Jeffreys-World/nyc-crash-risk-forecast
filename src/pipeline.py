@@ -12,6 +12,7 @@ flattering. The bar it has to clear was fixed before this file could produce any
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import logging
 import time
@@ -53,6 +54,7 @@ from src.spf import fit_and_blend
 
 log = logging.getLogger("pipeline")
 
+TRAIN_START = pd.Timestamp(f"{TRAIN_YEARS[0]}-01-01")
 TRAIN_END = pd.Timestamp(f"{TRAIN_YEARS[1] + 1}-01-01")
 HOLDOUT_START = TRAIN_END
 HOLDOUT_END = pd.Timestamp(f"{HOLDOUT_YEARS[1] + 1}-01-01")
@@ -91,13 +93,30 @@ class RunSummary:
     ci_excludes_zero: bool
     clears_bar: bool
     verdict: str
-    treated_pp: float | None
+    treated_before_holdout_pp: float | None
+    treated_during_holdout_pp: float | None
     untreated_pp: float | None
+    treated_before_holdout_units: int
+    treated_during_holdout_units: int
 
 
 # --------------------------------------------------------------------------------------
 # Loading
 # --------------------------------------------------------------------------------------
+
+
+# Modules whose behaviour determines the contents of the cached units frame. config is
+# included because the join radius, CRS, and windows all live there.
+_CACHE_KEY_MODULES = ("config.py", "spatial.py", "features.py")
+
+
+def _code_fingerprint() -> str:
+    """Short hash of the source files that determine the cached units frame."""
+    digest = hashlib.blake2b(digest_size=6)
+    for name in _CACHE_KEY_MODULES:
+        path = Path(__file__).with_name(name)
+        digest.update(path.read_bytes() if path.exists() else b"")
+    return digest.hexdigest()
 
 
 def latest_snapshot(root: Path = RAW_DIR) -> Path:
@@ -145,12 +164,30 @@ def prepare_centerline(snapshot: Path) -> gpd.GeoDataFrame:
 def build_scored_units(snapshot: Path, use_cache: bool = True) -> tuple[pd.DataFrame, dict]:
     """Universe + assigned crashes + labels + treatment, cached to parquet."""
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    cache = CACHE_DIR / f"units-{snapshot.name}.parquet"
-    stats_path = CACHE_DIR / f"units-{snapshot.name}.json"
+
+    # The cache key includes a fingerprint of the code that produces the cached frame,
+    # not just the snapshot date. Keyed on the date alone, editing a feature or a spatial
+    # join and re-running silently reuses units built by the previous version of the
+    # code, and the run reports numbers that no longer correspond to the source. That
+    # happened during this project's own build: a stale units file survived a change to
+    # the label join and produced a summary that disagreed with the log beside it.
+    #
+    # For a repo whose claim is "clone this and reproduce the number", a cache that can
+    # serve a stale intermediate is a correctness bug, not a performance detail.
+    fingerprint = _code_fingerprint()
+    cache = CACHE_DIR / f"units-{snapshot.name}-{fingerprint}.parquet"
+    stats_path = CACHE_DIR / f"units-{snapshot.name}-{fingerprint}.json"
 
     if use_cache and cache.exists() and stats_path.exists():
         log.info("using cached units: %s", cache)
         return pd.read_parquet(cache), json.loads(stats_path.read_text())
+
+    stale = sorted(CACHE_DIR.glob(f"units-{snapshot.name}-*.parquet"))
+    if stale:
+        log.info(
+            "code changed since %d cached build(s) for this snapshot; rebuilding",
+            len(stale),
+        )
 
     t0 = time.time()
     log.info("building universe from centerline")
@@ -179,7 +216,14 @@ def build_scored_units(snapshot: Path, use_cache: bool = True) -> tuple[pd.DataF
     log.info("assignment done in %.1fs", time.time() - t0)
 
     assigned["crash_date"] = pd.to_datetime(assigned["crash_date"])
-    train = assigned[assigned["crash_date"] < TRAIN_END]
+    # Bounded at both ends. `crash_date < TRAIN_END` alone silently included every crash
+    # back to the 2016 pull start, so the run reported a 2019-2023 training window while
+    # actually training on 2016-2023. It made little difference to the trailing counts,
+    # which only look back 36 months, but a provenance field that does not describe the
+    # run is the kind of quiet inaccuracy this project exists to avoid.
+    train = assigned[
+        (assigned["crash_date"] >= TRAIN_START) & (assigned["crash_date"] < TRAIN_END)
+    ]
     holdout = assigned[
         (assigned["crash_date"] >= HOLDOUT_START) & (assigned["crash_date"] < HOLDOUT_END)
     ]
@@ -256,7 +300,11 @@ def run(snapshot: Path | None = None, use_cache: bool = True) -> RunSummary:
     log.info(r2s_rate.summary())
     log.info(r3s_rate.summary())
 
-    split = split_by_treatment(scored, r1)
+    split = split_by_treatment(scored, r1, holdout_start=HOLDOUT_START)
+    for label, rate in split.items():
+        log.info("%s: %s", label, rate.summary())
+
+    treatment_when = pd.to_datetime(scored["treatment_date"], errors="coerce")
 
     summary = RunSummary(
         snapshot_date=snapshot.name,
@@ -284,8 +332,15 @@ def run(snapshot: Path | None = None, use_cache: bool = True) -> RunSummary:
         ci_excludes_zero=ci.excludes_zero,
         clears_bar=verdict.clears_bar,
         verdict=verdict.reason,
-        treated_pp=split["treated"].rate_pp,
+        treated_before_holdout_pp=split["treated_before_holdout"].rate_pp,
+        treated_during_holdout_pp=split["treated_during_holdout"].rate_pp,
         untreated_pp=split["untreated"].rate_pp,
+        treated_before_holdout_units=int(
+            (treatment_when.notna() & (treatment_when < HOLDOUT_START)).sum()
+        ),
+        treated_during_holdout_units=int(
+            (treatment_when.notna() & (treatment_when >= HOLDOUT_START)).sum()
+        ),
     )
 
     PROCESSED_DIR.mkdir(parents=True, exist_ok=True)

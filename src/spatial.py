@@ -572,8 +572,17 @@ def join_vzv_labels(
         )
 
         matched_units = set(hits["unit_id"])
-        out.loc[out["unit_id"].isin(matched_units), "is_priority"] = True
-        out.loc[out["unit_id"].isin(matched_units), "vzv_source"] = label
+        matched = out["unit_id"].isin(matched_units)
+        out.loc[matched, "is_priority"] = True
+
+        # Accumulate provenance instead of overwriting it. A node can be both a VZV
+        # priority intersection and a point on a VZV priority corridor; a plain
+        # assignment let the second layer erase the first, so the record said
+        # "intersection" for a unit that is on both lists.
+        existing = out.loc[matched, "vzv_source"]
+        out.loc[matched, "vzv_source"] = [
+            label if pd.isna(v) or v == label else f"{v}+{label}" for v in existing
+        ]
 
         matched_features = hits["_vzv_idx"].nunique()
         unmatched = set(vzv_p["_vzv_idx"]) - set(hits["_vzv_idx"])

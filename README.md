@@ -162,10 +162,20 @@ R1 captures **48.7%**, below the 64.1% a raw-count ranking of the same size achi
 That comparison is **confounded by design and must not be read as "DOT is worse."**
 
 Vision Zero priority locations were selected *in order to receive* Street Improvement
-Projects. 61,864 units carry an SIP. Split by treatment, R1's capture rate is **60.4% at
-treated units and 34.9% at untreated ones** — DOT's list overlaps far more strongly with
-the locations that got rebuilt, which is exactly what you would expect from a list whose
-purpose was to direct construction.
+Projects. 61,864 units carry an SIP, and treatment has to be placed in time rather than
+just flagged: SIP completion dates in this snapshot run to **2026-05-29**, so 4,092 units
+were rebuilt *during or after* the window they are being scored on.
+
+| Group | Units | Holdout casualties | R1 capture |
+|---|---:|---:|---:|
+| Treated before the holdout | 21,576 | 9,179 | **60.7%** |
+| Treated during the holdout | 1,580 | 597 | 56.3% |
+| Untreated | 15,753 | 8,283 | **34.9%** |
+
+DOT's list overlaps far more strongly with the locations that got rebuilt, which is
+exactly what you would expect from a list whose purpose was to direct construction. The
+mid-window group is reported separately rather than folded into either side: a street
+rebuilt in 2025 is genuinely neither treated nor untreated for a 2024–2025 outcome.
 
 So the honest reading is: a list selected to be *fixed* is being scored on what happened
 *after it was fixed*. This project cannot separate "the ranking was wrong" from "the

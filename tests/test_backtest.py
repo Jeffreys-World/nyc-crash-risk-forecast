@@ -489,6 +489,62 @@ class TestTreatmentSplit:
         with pytest.raises(BacktestError, match="confounded"):
             split_by_treatment(holdout.drop(columns=["treated"]), selection)
 
+    def test_treatment_after_holdout_start_is_not_counted_as_treated(self):
+        """Regression: ISSUE-006 — treatment was flagged but never placed in time.
+
+        Found by /qa on 2026-08-12.
+        Report: .gstack/qa-reports/qa-report-nyc-crash-risk-forecast-2026-08-12.md
+
+        SIP completion dates in the real snapshot run to 2026-05-29, and 4,092 units
+        were rebuilt during or after the 2024-2025 window they were being scored on.
+        Counting those as "treated" reads the intervention backwards.
+        """
+        frame = pd.DataFrame(
+            {
+                "unit_id": ["A", "B", "C"],
+                "holdout_casualties": [10, 10, 10],
+                "treated": [True, True, False],
+                "treatment_date": pd.to_datetime(["2019-06-01", "2025-06-01", None]),
+            }
+        )
+        selection = Selection("R1", "citywide", ["A", "B", "C"])
+        split = split_by_treatment(frame, selection, holdout_start=pd.Timestamp("2024-01-01"))
+
+        assert split["treated_before_holdout"].total == 10
+        assert split["treated_during_holdout"].total == 10
+        assert split["untreated"].total == 10
+
+    def test_timed_split_still_partitions_every_casualty(self):
+        """Three buckets must still account for the whole holdout, not overlap it."""
+        frame = pd.DataFrame(
+            {
+                "unit_id": [f"U{i}" for i in range(6)],
+                "holdout_casualties": [1, 2, 3, 4, 5, 6],
+                "treated": [True, True, False, True, False, False],
+                "treatment_date": pd.to_datetime(
+                    ["2019-01-01", "2025-01-01", None, "2020-01-01", None, None]
+                ),
+            }
+        )
+        selection = Selection("R1", "citywide", [f"U{i}" for i in range(6)])
+        split = split_by_treatment(frame, selection, holdout_start=pd.Timestamp("2024-01-01"))
+        assert sum(r.total for r in split.values()) == 21
+
+    def test_timed_split_requires_a_treatment_date_column(self):
+        frame = pd.DataFrame(
+            {"unit_id": ["A"], "holdout_casualties": [1], "treated": [True]}
+        )
+        with pytest.raises(BacktestError, match="treatment_date"):
+            split_by_treatment(
+                frame, Selection("R1", "citywide", ["A"]), holdout_start=pd.Timestamp("2024-01-01")
+            )
+
+    def test_untimed_split_still_available_and_two_way(self, holdout):
+        """Passing no holdout_start keeps the old behaviour, explicitly opted into."""
+        selection = select_citywide_top_n(holdout, "score", 5, "R1")
+        split = split_by_treatment(holdout, selection)
+        assert set(split) == {"treated", "untreated"}
+
     def test_absent_group_is_undefined_not_zero(self, holdout):
         none_treated = holdout.copy()
         none_treated["treated"] = False

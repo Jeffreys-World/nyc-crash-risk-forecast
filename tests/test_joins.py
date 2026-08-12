@@ -68,6 +68,22 @@ class TestVZVLabels:
         labelled, _ = join_vzv_labels(universe, empty, vzv_intersections)
         assert labelled.loc[labelled["unit_type"] == "corridor", "is_priority"].sum() == 0
 
+    def test_vzv_source_accumulates_instead_of_overwriting(
+        self, universe, vzv_corridors, vzv_intersections
+    ):
+        """Regression: ISSUE-009 — the intersection layer erased corridor provenance.
+
+        Found by /qa on 2026-08-12. A node can be both a VZV priority intersection and
+        a point on a VZV priority corridor. A plain assignment let the second layer
+        overwrite the first, so the record read "intersection" for a unit on both lists.
+        """
+        labelled, _ = join_vzv_labels(universe, vzv_corridors, vzv_intersections)
+        sources = set(labelled.loc[labelled["is_priority"], "vzv_source"].dropna())
+
+        # The fixture's VZV point sits on the fixture's VZV corridor, so at least one
+        # unit must carry both.
+        assert any("+" in s for s in sources), f"no combined provenance in {sources}"
+
     def test_empty_vzv_layer_labels_nothing_and_does_not_raise(self, universe, vzv_intersections):
         empty = gpd.GeoDataFrame(
             {"name": []}, geometry=gpd.GeoSeries([], crs=CRS_GEOGRAPHIC), crs=CRS_GEOGRAPHIC

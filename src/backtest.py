@@ -532,14 +532,20 @@ def apply_preregistered_bar(
 
 
 def split_by_treatment(
-    holdout: pd.DataFrame, selection: Selection
+    holdout: pd.DataFrame,
+    selection: Selection,
+    holdout_start: pd.Timestamp | None = None,
 ) -> dict[str, CaptureRate]:
-    """Capture rate among treated and untreated units separately.
+    """Capture rate by treatment status, split on when the treatment happened.
 
     This is the endogeneity control. DOT's priority locations were chosen *in order to*
     receive Street Improvement Projects, so their holdout casualty counts reflect the
     intervention. A single blended number cannot distinguish "the ranking was wrong"
     from "the ranking was right and the fix worked", and those are opposite conclusions.
+
+    Pass `holdout_start` to split treatment by time, which is what the control actually
+    requires. Leaving it None keeps the untimed two-way split, and any number reported
+    from it has to say so.
     """
     if "treated" not in holdout.columns:
         raise BacktestError(
@@ -547,11 +553,45 @@ def split_by_treatment(
             "backtest or the comparison is confounded"
         )
 
+    treated = holdout["treated"].fillna(False).astype(bool)
+
+    # Treatment has to be placed in time, not just flagged. SIP completion dates in this
+    # snapshot run to 2026-05-29, well past the start of the 2024-2025 holdout, and 4,092
+    # units were rebuilt during or after the window they are being scored on. Calling
+    # those "treated" reads the intervention backwards: it cannot have shaped an outcome
+    # that mostly preceded it.
+    #
+    # Three buckets rather than two, because a location rebuilt mid-window is genuinely
+    # neither. Folding it into "treated" overstates the intervention; folding it into
+    # "untreated" pretends no work happened. It gets named and reported.
+    if holdout_start is None:
+        groups = (("treated", treated), ("untreated", ~treated))
+    else:
+        if "treatment_date" not in holdout.columns:
+            raise BacktestError(
+                "holdout frame has no 'treatment_date' column, so treatment cannot be "
+                "placed relative to the holdout window. Pass holdout_start=None to "
+                "accept an untimed split, and say so wherever the number is reported."
+            )
+        when = pd.to_datetime(holdout["treatment_date"], errors="coerce")
+        before = treated & when.notna() & (when < holdout_start)
+        during = treated & when.notna() & (when >= holdout_start)
+        undated = treated & when.isna()
+        if undated.any():
+            log.warning(
+                "%d treated unit(s) have no usable treatment date; grouped as "
+                "treated_undated rather than assumed",
+                int(undated.sum()),
+            )
+        groups = (
+            ("treated_before_holdout", before),
+            ("treated_during_holdout", during),
+            ("treated_undated", undated),
+            ("untreated", ~treated),
+        )
+
     out: dict[str, CaptureRate] = {}
-    for label, mask in (
-        ("treated", holdout["treated"].fillna(False).astype(bool)),
-        ("untreated", ~holdout["treated"].fillna(False).astype(bool)),
-    ):
+    for label, mask in groups:
         subset = holdout[mask]
         if subset.empty:
             out[label] = CaptureRate(
