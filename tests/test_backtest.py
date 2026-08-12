@@ -156,6 +156,44 @@ class TestBoroughStratifiedSelection:
         selection = select_borough_stratified(units, "score", "casualties", "R3")
         assert selection.unit_ids == ["A"]
 
+    def test_null_borough_does_not_become_a_phantom_borough(self):
+        """Regression: ISSUE-002 — a null borough got its own 50% stopping rule.
+
+        Found by /qa on 2026-08-12.
+        Report: .gstack/qa-reports/qa-report-nyc-crash-risk-forecast-2026-08-12.md
+
+        Unit A had the highest score and no borough. It was grouped under a null key,
+        given its own borough budget, and selected — handing the model a pick DOT
+        never had and inflating its capture rate.
+        """
+        units = pd.DataFrame(
+            {
+                "unit_id": ["A", "B", "C"],
+                "unit_type": "corridor",
+                "borough": [None, "MANHATTAN", "MANHATTAN"],
+                "score": [9, 5, 3],
+                "casualties": [9, 5, 3],
+            }
+        )
+        selection = select_borough_stratified(units, "score", "casualties", "R3")
+
+        assert "A" not in selection.unit_ids
+        assert not any("nan" in k.lower() for k in selection.per_borough)
+        assert any("no borough" in n for n in selection.notes)
+
+    def test_all_null_boroughs_raises_rather_than_selecting_nothing(self):
+        units = pd.DataFrame(
+            {
+                "unit_id": ["A", "B"],
+                "unit_type": "corridor",
+                "borough": [None, None],
+                "score": [9, 5],
+                "casualties": [9, 5],
+            }
+        )
+        with pytest.raises(BacktestError, match="every unit lacks a borough"):
+            select_borough_stratified(units, "score", "casualties", "R3")
+
     def test_requires_a_borough_column(self):
         units = pd.DataFrame(
             {"unit_id": ["A"], "unit_type": "corridor", "score": [1], "casualties": [1]}

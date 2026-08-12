@@ -140,6 +140,35 @@ def select_borough_stratified(
     per_borough: dict[str, int] = {}
     notes: list[str] = []
 
+    # Units with no borough cannot take part in a borough-stratified selection. Left
+    # in, pandas groups them under a null key and they become a phantom sixth borough
+    # with its own 50% stopping rule, so the model gets extra picks DOT never had and
+    # its capture rate is inflated. Real centerline data has these (bridges, boundary
+    # and shoreline segments), so this is the normal case, not an exotic one.
+    #
+    # They are excluded here and counted, not dropped from the universe: the capture
+    # rate denominator downstream still has to be the true casualty total, and the
+    # citywide regime still ranks them.
+    unplaceable = units["borough"].isna()
+    if unplaceable.any():
+        notes.append(
+            f"{int(unplaceable.sum())} unit(s) have no borough and were excluded from "
+            f"borough-stratified selection; they remain in the universe and in the "
+            f"citywide regime"
+        )
+        log.warning(
+            "%s: %d unit(s) have no borough; excluded from stratified selection",
+            name,
+            int(unplaceable.sum()),
+        )
+    units = units[~unplaceable]
+
+    if units.empty:
+        raise BacktestError(
+            f"{name}: every unit lacks a borough, so borough-stratified selection is "
+            f"impossible. Borough comes from unit geometry - check the universe build."
+        )
+
     for (borough, unit_type), group in units.groupby(["borough", "unit_type"], dropna=False):
         target_share = shares.get(str(unit_type))
         if target_share is None:
