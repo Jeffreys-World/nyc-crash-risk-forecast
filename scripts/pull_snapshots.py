@@ -21,7 +21,6 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-import os
 import sys
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -32,7 +31,13 @@ import requests
 # Allow `python scripts/pull_snapshots.py` from the repo root without installing.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from src.config import CENTERLINE_SOURCE, RAW_DIR, SOURCES, SocrataSource  # noqa: E402
+from src.config import (  # noqa: E402
+    CENTERLINE_SOURCE,
+    RAW_DIR,
+    SOCRATA_APP_TOKEN,
+    SOURCES,
+    SocrataSource,
+)
 from src.socrata import SocrataError, fetch_socrata  # noqa: E402
 
 log = logging.getLogger("pull_snapshots")
@@ -95,8 +100,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--only", action="append", help="pull only this source key (repeatable)")
     parser.add_argument(
         "--app-token",
-        default=os.environ.get("SOCRATA_APP_TOKEN"),
-        help="Socrata app token; also read from SOCRATA_APP_TOKEN",
+        default=SOCRATA_APP_TOKEN,
+        help="Socrata app token; defaults to SOCRATA_APP_TOKEN from the environment or .env",
     )
     parser.add_argument("--verbose", "-v", action="store_true")
     args = parser.parse_args(argv)
@@ -105,6 +110,13 @@ def main(argv: list[str] | None = None) -> int:
         level=logging.DEBUG if args.verbose else logging.INFO,
         format="%(asctime)s %(levelname)-7s %(message)s",
         datefmt="%H:%M:%S",
+    )
+
+    # Never log the token itself, only whether one was found. A token echoed into CI
+    # output is a token in a log aggregator.
+    log.info(
+        "Socrata app token: %s",
+        "present" if args.app_token else "MISSING (anonymous requests are throttled hard)",
     )
 
     sources = dict(SOURCES)

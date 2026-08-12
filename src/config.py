@@ -6,8 +6,11 @@ pipeline stage, so "what did this run actually use" is answerable by reading one
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
+
+from dotenv import load_dotenv
 
 # --------------------------------------------------------------------------------------
 # Paths
@@ -18,6 +21,39 @@ DATA_DIR = REPO_ROOT / "data"
 RAW_DIR = DATA_DIR / "raw"          # gitignored: dated snapshots, re-pullable
 CACHE_DIR = DATA_DIR / "cache"      # gitignored: expensive spatial joins
 PROCESSED_DIR = DATA_DIR / "processed"  # committed: small aggregated intermediate
+
+# --------------------------------------------------------------------------------------
+# Secrets
+# --------------------------------------------------------------------------------------
+
+# Loaded from the repo root rather than the caller's working directory, so the token
+# resolves the same whether the pull is run from the repo root, from scripts/, or by
+# pytest. `override=False` means a real environment variable always wins over the file,
+# which is what CI and any future deploy will set.
+load_dotenv(REPO_ROOT / ".env", override=False)
+
+# Socrata app token. Raises the NYC Open Data rate limit; anonymous requests are
+# throttled hard and this project walks roughly 800k crash rows.
+#
+# This is a rate-limit identifier, not an authentication credential: it grants no write
+# access and no access to anything not already public. Socrata's own guidance permits
+# embedding app tokens in client-side code. It is kept in a gitignored `.env` anyway,
+# because a token in git history is a token you cannot quietly rotate.
+def _clean_token(raw: str | None) -> str | None:
+    """Normalise a token to a usable value or None.
+
+    Whitespace is stripped and a blank value becomes None. This is not cosmetic: a
+    whitespace-only token makes `requests` raise InvalidHeader before the request is
+    even sent, so the pull dies on a traceback about header validity rather than
+    saying the token is missing. Pasting a token into `.env` and picking up a stray
+    space is an ordinary slip.
+    """
+    if raw is None:
+        return None
+    return raw.strip() or None
+
+
+SOCRATA_APP_TOKEN: str | None = _clean_token(os.environ.get("SOCRATA_APP_TOKEN"))
 
 # --------------------------------------------------------------------------------------
 # Socrata sources

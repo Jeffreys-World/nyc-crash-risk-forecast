@@ -183,9 +183,18 @@ cd nyc-crash-risk-forecast
 uv venv --python 3.12
 uv pip install -e ".[dev]"
 
-.venv/bin/python -m pytest                      # 184 tests, no network needed
+# credentials — needed only for the data pull, not for the tests
+cp .env.example .env      # then paste your own Socrata app token into it
+
+.venv/bin/python -m pytest                      # 194 tests, no network or token needed
 .venv/bin/python scripts/pull_snapshots.py      # data/raw/<date>/*.parquet + manifest.json
 ```
+
+Get a Socrata app token from
+[NYC Open Data developer settings](https://data.cityofnewyork.us/profile/edit/developer_settings).
+The pull runs without one, but anonymous requests are throttled hard and this project
+walks roughly 1.5M crash rows. `.env` is gitignored; `.env.example` is the committed
+template and holds no real value.
 
 The test suite runs green on a clean clone with no data pulled, because every stage is
 covered against a synthetic fixture city. That is deliberate: the guards are verifiable
