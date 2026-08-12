@@ -565,10 +565,15 @@ def split_by_treatment(
             )
             continue
 
+        # The set is built once, not once per candidate. Inside the comprehension it
+        # was rebuilt for every selected unit: ~39k selections against a ~100k-row
+        # subset is billions of operations, and it turned a step that should be
+        # instant into 24 minutes of the first real run.
+        subset_ids = set(subset["unit_id"])
         sub_selection = Selection(
             name=f"{selection.name} ({label})",
             regime=selection.regime,
-            unit_ids=[u for u in selection.unit_ids if u in set(subset["unit_id"])],
+            unit_ids=[u for u in selection.unit_ids if u in subset_ids],
         )
         out[label] = capture_rate(sub_selection, subset)
 

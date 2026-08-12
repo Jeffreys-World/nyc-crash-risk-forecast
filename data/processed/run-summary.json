@@ -1,0 +1,32 @@
+{
+  "snapshot_date": "2026-08-12",
+  "crashes_pulled": 1541146,
+  "crashes_assigned": 1405552,
+  "crashes_dropped": 135594,
+  "universe_units": 220033,
+  "corridors": 136537,
+  "intersections": 83496,
+  "priority_units": 38909,
+  "treated_units": 61864,
+  "train_window": "2019-2023",
+  "holdout_window": "2024-2025",
+  "holdout_casualties": 18059,
+  "dispersion": {
+    "corridor": 5.704696484221117,
+    "intersection": 2.59507661259646
+  },
+  "citywide_n": 38909,
+  "r1_citywide_pp": 48.74024032338446,
+  "r2_citywide_pp": 64.11207708068,
+  "r3_citywide_pp": 82.5350240877125,
+  "r2_stratified_pp": 9.911955257766211,
+  "r3_stratified_pp": 10.964062240434133,
+  "lift_pp": 18.422947007032505,
+  "ci_low_pp": 17.53611847059296,
+  "ci_high_pp": 19.295322248719998,
+  "ci_excludes_zero": true,
+  "clears_bar": true,
+  "verdict": "lift +18.4pp with CI +17.5 to +19.3",
+  "treated_pp": 60.443944353518816,
+  "untreated_pp": 34.9269588313413
+}

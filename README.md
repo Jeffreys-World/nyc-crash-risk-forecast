@@ -17,14 +17,73 @@ Bayes — and backtests both against what actually happened on held-out years.
 
 ## Headline result
 
-> **PENDING — the pipeline is still being built. No backtest has been run.**
->
-> This section will carry one number and one chart. The bar that number must clear is
-> defined below, and was written before the number existed. See
-> [The bar, set in advance](#the-bar-set-in-advance).
+**Count-based ranking is blind below its own noise floor, and that is where most of New
+York is.**
 
-Nothing in this README claims a result yet. When the backtest runs, the number goes here
-whether or not it is flattering.
+Only **13,712 of 220,033 units (6.2%)** had a single pedestrian casualty in the trailing
+36 months. The other 206,321 are tied at zero, so a ranking built on historical counts
+cannot order them at all — it is picking at random. Those tied-at-zero locations went on
+to produce **7,408 casualties, 41% of everything that happened in 2024–2025.**
+
+A Safety Performance Function can order them, because it reads the road rather than the
+history.
+
+Scored on 2024–2025, each ranking selecting 38,909 locations (the footprint of DOT's
+published list):
+
+| Ranking | Casualties captured | Share of 18,059 |
+|---|---:|---:|
+| **R1** DOT's published Vision Zero list | 8,802 | **48.7%** |
+| **R2** raw trailing casualty count | 11,578 | **64.1%** |
+| **R3** Empirical Bayes (SPF + observed) | 14,905 | **82.5%** |
+
+**R3 − R2 = +18.4pp, 95% CI [+17.5, +19.3].** That clears the
+[pre-registered bar](#the-bar-set-in-advance) of ≥5pp with a CI excluding zero.
+
+### The number that keeps that honest
+
+**The advantage is almost entirely about locations with no crash history, and it scales
+with how many you have to rank.**
+
+| N selected | R2 raw count | R3 Empirical Bayes | Lift | |
+|---:|---:|---:|---:|---|
+| 5,000 | 37.1% | 38.9% | +1.8pp | |
+| 13,712 | 59.0% | 61.0% | **+2.1pp** | every unit with any history |
+| 20,000 | 60.2% | 68.1% | +7.9pp | |
+| 38,909 | 64.1% | 82.5% | **+18.4pp** | DOT's list size — the pre-registered N |
+| 60,000 | 68.7% | 89.5% | +20.8pp | |
+
+Where both methods have real information — ranking only the 13,712 locations that have
+any crash history — **Empirical Bayes adds 2.1pp and would not have cleared the bar.**
+
+The +18.4pp headline is real at the pre-registered N, and it is not a general claim that
+EB beats counting by eighteen points. It is a specific claim: *once you must rank more
+locations than you have crash history for, counting stops being a method and a model
+starts earning its keep.* That is the regression-to-the-mean argument the Highway Safety
+Manual makes, measured on real data instead of asserted.
+
+Anyone quoting the 18.4 without the 2.1 is quoting it wrong.
+
+### What it actually ranks
+
+Top of the list, scored before the holdout ([full 50](data/processed/top-50-ranked.csv)):
+
+| # | Location | Borough | Trailing 36mo | On DOT's list |
+|---|---|---|---:|---|
+| 1 | E Fordham Rd & Webster Ave | Bronx | 21 | yes |
+| 2 | Broadway & W 204 St | Manhattan | 23 | **no** |
+| 3 | Devoe Park Path & University Ave & W Fordham Rd | Bronx | 18 | yes |
+| 4 | Lenox Ave & W 125 St | Manhattan | 20 | yes |
+| 5 | Frederick Douglass Blvd & W 145 St | Manhattan | 16 | yes |
+
+**At the top, the model and DOT mostly agree** — only 4 of the top 50 are absent from the
+published list, and those 4 carry 9 of the top 50's 254 holdout casualties. That agreement
+is a validity check, not a disappointment: a screening method that disagreed with DOT about
+Fordham Road would be suspect.
+
+The divergence lives in the tail, which is the same story the N-sweep tells. Note also that
+Broadway & W 204 St, the highest-ranked location DOT omits, had 23 trailing casualties and
+1 in the holdout — regression to the mean landing on the model's own pick.
 
 ---
 
@@ -83,6 +142,34 @@ its picks where density is highest while DOT is obliged to spend picks in every 
 
 Both get reported. A result that only appears in one regime is a result about the selection
 rule, not about the model.
+
+**Measured, 2024–2025 holdout:**
+
+| | R2 raw count | R3 Empirical Bayes | Lift |
+|---|---:|---:|---:|
+| Regime A, borough-stratified (1,347 / 1,421 units) | 9.9% | 11.0% | +1.1pp |
+| Regime B, citywide top-N (38,909 units) | 64.1% | 82.5% | +18.4pp |
+
+The two regimes select wildly different numbers of locations, because DOT's stopping rule
+applied to *this* casualty distribution stops at ~1,400 units, not 38,909. That makes the
+regimes non-comparable to each other, and it is another face of the same finding: at
+~1,400 selections both methods are working inside the region where history exists, and the
+gap nearly vanishes.
+
+### What about DOT's actual list?
+
+R1 captures **48.7%**, below the 64.1% a raw-count ranking of the same size achieves.
+That comparison is **confounded by design and must not be read as "DOT is worse."**
+
+Vision Zero priority locations were selected *in order to receive* Street Improvement
+Projects. 61,864 units carry an SIP. Split by treatment, R1's capture rate is **60.4% at
+treated units and 34.9% at untreated ones** — DOT's list overlaps far more strongly with
+the locations that got rebuilt, which is exactly what you would expect from a list whose
+purpose was to direct construction.
+
+So the honest reading is: a list selected to be *fixed* is being scored on what happened
+*after it was fixed*. This project cannot separate "the ranking was wrong" from "the
+ranking was right and the intervention worked," and it does not claim to.
 
 ---
 
@@ -161,12 +248,35 @@ pipeline reads only snapshots, never the API.
 | VZV Priority Intersections | `2nj7-jxah` | R1, intersection half |
 | Street Improvement Projects — Corridors | `wqhs-q6wd` | Treatment flag and date |
 | Street Improvement Projects — Intersections | `79sh-heg3` | Treatment flag and date |
-| Street centerline | *pending selection* | The candidate universe and segment length |
+| Street centerline | `inkn-q76z` | The candidate universe, segment length, borough, road class |
 
-**Snapshot vintage:** `PENDING — no snapshot pulled yet`
-**Row counts:** `PENDING`
-**Centerline source:** `PENDING — candidates 3mf9-qshr, inkn-q76z, and DCP LION are not yet
-schema-inspected. Whichever is chosen gets pinned here with its vintage.`
+**Snapshot vintage:** `2026-08-12`
+
+| | |
+|---|---:|
+| Crashes pulled (2016-01-01 onward) | 1,541,146 |
+| Crashes assigned to a unit | 1,405,552 (91.2%) |
+| Dropped — no coordinates | 125,910 |
+| Dropped — at (0, 0) | 7,588 |
+| Dropped — outside NYC | 149 |
+| Dropped — >150 ft from any street | 1,947 |
+| Centerline segments | 122,244 |
+| Units in the universe | 220,033 (136,537 corridors, 83,496 intersections) |
+| VZV features matched | corridors 199/199, intersections 303/304 |
+| SIP records | 1,420 (1 undated, excluded) |
+| Holdout casualties, 2024–2025 | 18,059 |
+
+**A note on the four dataset IDs.** The VZV and SIP resources were originally pinned to
+`kdda-2wcy`, `2nj7-jxah`, `wqhs-q6wd`, and `79sh-heg3`. Those IDs exist and report row
+counts, which is why they passed a existence check — but they are
+`visualization_canvas_map` views with **zero API-accessible columns**, and every row comes
+back as `{}`. The real datasets are the four in the table above. Verifying that a dataset
+exists is not the same as verifying its data can be read.
+
+**8.2% of crashes carry no coordinates.** That is a second data-quality gap beneath the
+borough gap this project descends from, and for a geometry-based model it is the binding
+one: a crash with no latitude cannot attach to any street, so it is invisible here. It is
+counted, not hidden.
 
 Raw snapshots are gitignored. The small aggregated intermediate is committed so the headline
 is checkable without a full re-pull.
@@ -186,7 +296,7 @@ uv pip install -e ".[dev]"
 # credentials — needed only for the data pull, not for the tests
 cp .env.example .env      # then paste your own Socrata app token into it
 
-.venv/bin/python -m pytest                      # 194 tests, no network or token needed
+.venv/bin/python -m pytest                      # 203 tests, no network or token needed
 .venv/bin/python scripts/pull_snapshots.py      # data/raw/<date>/*.parquet + manifest.json
 ```
 
@@ -218,8 +328,17 @@ a story.
   long arterial currently get the same exposure. This is the single largest known gap and is
   written up in [TODOS.md](TODOS.md).
 - **No completeness claim on the crash data.** Unreported and under-reported crashes are
-  invisible to this and to DOT alike.
+  invisible to this and to DOT alike. 8.2% of records carry no coordinates and cannot be
+  placed on any street.
 - **Nothing about cyclists or motorists.** Pedestrian mode only, to match DOT's list.
+- **No general claim that Empirical Bayes beats counting by 18 points.** The lift is
+  2.1pp where both methods have crash history to work with. See
+  [the N-sweep](#the-number-that-keeps-that-honest).
+- **No claim that highways are safe.** `is_highway` carries a negative coefficient here
+  because pedestrians are rarely struck on limited-access roads, not because those roads
+  are safe. This project's label is pedestrian casualties, so the highway finding that
+  motivated the parent dashboard — that borough-less rows are 1.67x deadlier overall —
+  does not transfer to it. The method carries over; that specific finding does not.
 
 ---
 
@@ -236,6 +355,41 @@ errors. Each has an explicit guard and a test:
 
 ---
 
+## The discarded run
+
+The first run against real data, on 2026-08-12, reported **R3 beating the baseline by
++16.7pp with a CI excluding zero** — clearing the pre-registered bar. It was thrown away.
+It is recorded here because a discarded run is part of the record, and because the bar
+existing in advance is what made throwing it away possible rather than tempting.
+
+Three defects, each of which alone invalidates it:
+
+1. **The SPF was degenerate.** Fitted intercept **−29.5** with a `night_share` coefficient
+   of **+21.9**, and **163,556 of 220,033 units** predicted at or below 1e-9. The
+   crash-derived predictors were `0.0` both for a unit with no crashes and for a unit
+   whose crashes were all in daylight, so the model learned "night_share > 0 means this
+   unit had a crash." It was a crash-presence detector wearing an SPF's clothes.
+   Underneath sat a methodological error: an HSM Safety Performance Function predicts from
+   *road characteristics*; crash history belongs in the Empirical Bayes blend, and feeding
+   it to both counts it twice.
+
+2. **The tie-break was rigging the baseline.** Unit IDs are `C…` for corridors and `I…`
+   for intersections, and ties sorted on `unit_id` ascending. Since most units are tied at
+   zero, the naive baseline spent its entire quota on alphabetically-early corridors —
+   which hold 14% of casualties against the intersections' 86%. The measured lift was
+   partly an artifact of the alphabet.
+
+3. **DOT's list could not capture its own casualties.** VZV corridor labels stopped at
+   segments, but crashes within 100 ft of a junction are assigned to the *node*, and 86%
+   of pedestrian casualties happen at intersections. R1's implausible 11.9% measured the
+   labeling, not DOT.
+
+A fourth issue surfaced while fixing these: with site characteristics as predictors, the
+negative-binomial fit stopped converging, and the convergence guard refused to return
+parameters. Starting the search from a Poisson fit (NB2's limit as dispersion → 0) fixed
+it. Dispersion went from 2.53 to 5.70 — the degenerate model had been understating
+overdispersion, which is the one parameter the entire Empirical Bayes weight depends on.
+
 ## Status
 
 Approach A — the audit slice. Deliberately narrow: produce one defensible finding, then decide
@@ -244,18 +398,12 @@ whether it is worth wrapping in a tool.
 | | |
 |---|---|
 | ✅ Scope and method settled | Office-hours design review, eng review (7 findings, all folded in) |
-| ✅ Pipeline built and tested | T1–T10: snapshot pull, universe, features, SPF, EB, backtest. 184 tests green |
-| ⛔ Blocked | Centerline source not pinned, so the unit universe cannot be built from real data |
-| ⏭ Next | Inspect the centerline candidates, pin one, pull snapshots, run the backtest |
-| ⏸ Gated on a result | Streamlit page, budget slider, SHAP explainer, CI (Approach B) |
-| ⏸ Gated on a result | The named-streets counterfactual (Approach C) |
+| ✅ Pipeline built and tested | Snapshot pull, universe, features, SPF, EB, backtest. 203 tests green |
+| ✅ Run against real data | Snapshot 2026-08-12, result above, one earlier run discarded |
+| ⏭ Next | Error analysis by road class; sensitivity of the result to the join radius |
+| ⏸ Gated | Streamlit page, budget slider, SHAP explainer, CI (Approach B) |
+| ⏸ Gated | The named-streets counterfactual (Approach C) |
 | 📋 Deferred, written up | Traffic-volume exposure ([TODOS.md](TODOS.md)) |
-
-The pipeline is code-complete and its guards are verified against a synthetic fixture
-city. It has never been run against real NYC data, because the centerline source is still
-unpinned — the three candidates (`3mf9-qshr`, `inkn-q76z`, DCP LION) have not been
-schema-inspected. `src/config.py` sets `CENTERLINE_SOURCE = None` and the pull script skips
-it with a warning rather than substituting a guess.
 
 Approach B and C are gated deliberately. There is no point wrapping a finding in a tool before
 knowing whether the finding exists.

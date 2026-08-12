@@ -225,6 +225,7 @@ def build_node_universe(segments: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
     assert_projected(segments, "segments")
 
     has_borough = "borough" in segments.columns
+    has_street_name = "full_street_name" in segments.columns
     attribute_cols = [c for c in (*ROAD_NUMERIC_COLUMNS, "is_highway") if c in segments.columns]
 
     records: list[dict[str, object]] = []
@@ -243,6 +244,8 @@ def build_node_universe(segments: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
             record: dict[str, object] = {"xy": (round(x, 0), round(y, 0))}
             if has_borough:
                 record["borough"] = getattr(row, "borough", None)
+            if has_street_name:
+                record["street"] = getattr(row, "full_street_name", None)
             for column in attribute_cols:
                 record[column] = getattr(row, column, None)
             records.append(record)
@@ -270,6 +273,19 @@ def build_node_universe(segments: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
             .agg(lambda s: s.mode().iat[0] if not s.mode().empty else None)
         )
         data["borough"] = [modal.get(xy) for xy in junctions.index]
+
+    if has_street_name:
+        # Name each junction by the streets that meet there, DOT-style: "GRAND
+        # CONCOURSE & E 149 ST". Without this the ranked output identifies its top
+        # locations as "I23650", which is no more actionable than the anonymous ~100m
+        # grid cell this project chose named segments over. A budget-holder cannot fund
+        # a unit id.
+        def _name(streets: pd.Series) -> str:
+            unique = sorted({s.strip() for s in streets.dropna() if str(s).strip()})
+            return " & ".join(unique[:3]) if unique else ""
+
+        named = endpoint_frame.groupby("xy")["street"].agg(_name)
+        data["full_street_name"] = [named.get(xy, "") for xy in junctions.index]
 
     # An intersection has no geometry of its own, so its road characteristics are those
     # of the streets meeting there. The aggregations are chosen to describe the worst
@@ -330,7 +346,15 @@ def build_universe(centerline: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
     # drops the entire intersection universe. The road characteristics ride along for
     # the same reason they do on segments: they are the SPF's predictors.
     node_cols = keep + [
-        c for c in ("leg_count", "borough", *ROAD_NUMERIC_COLUMNS, "is_highway") if c in nodes
+        c
+        for c in (
+            "leg_count",
+            "borough",
+            "full_street_name",
+            *ROAD_NUMERIC_COLUMNS,
+            "is_highway",
+        )
+        if c in nodes
     ]
 
     universe = pd.concat(
