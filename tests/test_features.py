@@ -186,6 +186,25 @@ class TestMixFeatures:
         assert "factor_unspecified" in out.columns
         assert out.loc[out["unit_id"] == "C1", "factor_unspecified"].iloc[0] > 0
 
+    def test_denominator_is_mentions_not_crashes(self):
+        """ISSUE-005: pins the documented semantics so they cannot drift.
+
+        Found by /qa on 2026-08-12. One crash naming two factors gives each 0.5, not
+        1.0, because the denominator counts factor mentions.
+        """
+        units = pd.DataFrame({"unit_id": ["A"], "unit_type": ["corridor"]})
+        one_crash_two_factors = pd.DataFrame(
+            {
+                "unit_id": ["A"],
+                "crash_date": pd.to_datetime(["2023-06-01"]),
+                "contributing_factor_vehicle_1": ["Unsafe Speed"],
+                "contributing_factor_vehicle_2": ["Unspecified"],
+            }
+        )
+        out = factor_mix(one_crash_two_factors, units, pd.Timestamp("2024-01-01"))
+        assert out["factor_unsafe_speed"].iloc[0] == pytest.approx(0.5)
+        assert out["factor_unspecified"].iloc[0] == pytest.approx(0.5)
+
     def test_units_without_crashes_get_zero_share(self, assigned, units):
         out = factor_mix(assigned, units, pd.Timestamp("2024-01-01"))
         assert out.loc[out["unit_id"] == "C2", "factor_unspecified"].iloc[0] == 0.0

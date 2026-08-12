@@ -256,7 +256,13 @@ def factor_mix(
     as_of: pd.Timestamp,
     months: int = 36,
 ) -> pd.DataFrame:
-    """Share of a unit's crashes attributed to each tracked contributing factor.
+    """Share of a unit's factor *mentions* attributed to each tracked factor.
+
+    The denominator is non-null factor mentions, not crashes. A crash naming two
+    contributing factors contributes two mentions, so a single crash with "Unsafe
+    Speed" and "Unspecified" yields 0.5 for each rather than 1.0. That is the intended
+    behaviour for a mix feature, but it is not the same as a share of crashes, and
+    reading it as one would overstate how dominant any single factor is.
 
     Shares, not counts, so the feature describes the character of a location rather
     than restating its volume. Volume is already carried by the trailing counts, and
