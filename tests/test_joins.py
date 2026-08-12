@@ -25,7 +25,9 @@ class TestVZVLabels:
         labelled, _ = join_vzv_labels(universe, vzv_corridors, vzv_intersections)
         assert labelled["is_priority"].sum() > 0
 
-    def test_orphan_corridor_is_flagged_not_dropped(self, universe, vzv_corridors, vzv_intersections):
+    def test_orphan_corridor_is_flagged_not_dropped(
+        self, universe, vzv_corridors, vzv_intersections
+    ):
         """The second fixture corridor is nowhere near the grid, by design."""
         _, report = join_vzv_labels(universe, vzv_corridors, vzv_intersections)
         assert report.vzv_corridors_in == 2

@@ -179,17 +179,21 @@ is checkable without a full re-pull.
 git clone https://github.com/Jeffreys-World/nyc-crash-risk-forecast.git
 cd nyc-crash-risk-forecast
 
-# environment (see pyproject.toml)
-python -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev]"
+# environment — uv fetches its own Python, so no system Python is required
+uv venv --python 3.12
+uv pip install -e ".[dev]"
 
-python scripts/pull_snapshots.py     # writes data/raw/<date>/*.parquet + manifest.json
-python -m src.pipeline               # universe -> features -> SPF -> EB -> backtest
-pytest                               # the 28 identified paths plus a fixture E2E
+.venv/bin/python -m pytest                      # 184 tests, no network needed
+.venv/bin/python scripts/pull_snapshots.py      # data/raw/<date>/*.parquet + manifest.json
 ```
 
-Cloning this repo, running the pull, and running the pipeline should reproduce the headline
-number exactly. That reproduction path is the only real proof the result is not a story.
+The test suite runs green on a clean clone with no data pulled, because every stage is
+covered against a synthetic fixture city. That is deliberate: the guards are verifiable
+before anyone spends an API call.
+
+Cloning this repo, running the pull, and running the pipeline should then reproduce the
+headline number exactly. That reproduction path is the only real proof the result is not
+a story.
 
 ---
 
@@ -231,10 +235,18 @@ whether it is worth wrapping in a tool.
 | | |
 |---|---|
 | ✅ Scope and method settled | Office-hours design review, eng review (7 findings, all folded in) |
-| 🔨 In progress | Pipeline build, T1–T10 |
+| ✅ Pipeline built and tested | T1–T10: snapshot pull, universe, features, SPF, EB, backtest. 184 tests green |
+| ⛔ Blocked | Centerline source not pinned, so the unit universe cannot be built from real data |
+| ⏭ Next | Inspect the centerline candidates, pin one, pull snapshots, run the backtest |
 | ⏸ Gated on a result | Streamlit page, budget slider, SHAP explainer, CI (Approach B) |
 | ⏸ Gated on a result | The named-streets counterfactual (Approach C) |
 | 📋 Deferred, written up | Traffic-volume exposure ([TODOS.md](TODOS.md)) |
+
+The pipeline is code-complete and its guards are verified against a synthetic fixture
+city. It has never been run against real NYC data, because the centerline source is still
+unpinned — the three candidates (`3mf9-qshr`, `inkn-q76z`, DCP LION) have not been
+schema-inspected. `src/config.py` sets `CENTERLINE_SOURCE = None` and the pull script skips
+it with a warning rather than substituting a guess.
 
 Approach B and C are gated deliberately. There is no point wrapping a finding in a tool before
 knowing whether the finding exists.

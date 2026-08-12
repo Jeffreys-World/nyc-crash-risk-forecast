@@ -23,7 +23,7 @@ import json
 import logging
 import os
 import sys
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 import pandas as pd
@@ -151,7 +151,7 @@ def main(argv: list[str] | None = None) -> int:
             )
 
     manifest = {
-        "pulled_at": datetime.now(timezone.utc).isoformat(),
+        "pulled_at": datetime.now(UTC).isoformat(),
         "snapshot_date": out_dir.name,
         "centerline_pinned": CENTERLINE_SOURCE is not None,
         "sources": entries,

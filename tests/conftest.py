@@ -110,8 +110,14 @@ def vzv_corridors() -> gpd.GeoDataFrame:
     """One corridor overlapping the southern E-W street, one matching nothing."""
     return gpd.GeoDataFrame(
         [
-            {"name": "on-grid", "geometry": LineString([(LONS[0], LATS[0]), (LONS[1], LATS[0])])},
-            {"name": "orphan", "geometry": LineString([(FAR_LON, FAR_LAT), (FAR_LON + 0.001, FAR_LAT)])},
+            {
+                "name": "on-grid",
+                "geometry": LineString([(LONS[0], LATS[0]), (LONS[1], LATS[0])]),
+            },
+            {
+                "name": "orphan",
+                "geometry": LineString([(FAR_LON, FAR_LAT), (FAR_LON + 0.001, FAR_LAT)]),
+            },
         ],
         geometry="geometry",
         crs=CRS_GEOGRAPHIC,

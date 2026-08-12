@@ -41,6 +41,11 @@ from src.config import (
 
 log = logging.getLogger(__name__)
 
+# Share of bootstrap resamples allowed to have a zero denominator before the interval
+# is refused outright. See the note in `bootstrap_capture_difference` for why this is
+# 10% and not something higher.
+MAX_DEGENERATE_RESAMPLE_FRACTION = 0.10
+
 
 class BacktestError(RuntimeError):
     """A backtest result would be uninterpretable or silently wrong."""
@@ -339,10 +344,19 @@ def bootstrap_capture_difference(
         )
 
     usable = diffs[np.isfinite(diffs)]
-    if usable.size < iterations * 0.5:
+    degenerate_fraction = degenerate / iterations
+    if degenerate_fraction > MAX_DEGENERATE_RESAMPLE_FRACTION:
+        # The threshold is set where it can actually fire. If casualties sit in k
+        # units, the share of resamples that draw none of them tends to exp(-k), so a
+        # single casualty-bearing unit degenerates about 37% of the time and even two
+        # only reach 14%. A 50% bar would be unreachable and therefore decorative;
+        # 10% corresponds to roughly three or more casualty-bearing units, which is
+        # the point below which an interval is not worth quoting.
         raise BacktestError(
-            f"bootstrap unusable: {degenerate}/{iterations} resamples had a zero "
-            f"denominator. The holdout is too sparse to support an interval."
+            f"bootstrap unusable: {degenerate}/{iterations} resamples "
+            f"({degenerate_fraction:.1%}) had a zero denominator, above the "
+            f"{MAX_DEGENERATE_RESAMPLE_FRACTION:.0%} limit. Holdout casualties are "
+            f"concentrated in too few units to support an interval."
         )
 
     alpha = (1.0 - level) / 2.0

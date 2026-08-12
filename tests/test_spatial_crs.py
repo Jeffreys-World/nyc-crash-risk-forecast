@@ -19,7 +19,6 @@ from src.spatial import (
     assert_projected,
     build_node_universe,
     build_segment_universe,
-    build_universe,
     to_projected,
 )
 
@@ -73,14 +72,28 @@ class TestSegmentUniverse:
 
     def test_flags_degenerate_segments_without_dropping_them(self, centerline):
         """Zero-length segments stay in the universe so the denominator is honest."""
+        import pandas as pd
         from shapely.geometry import LineString
 
-        degenerate = centerline.copy()
-        degenerate.loc[len(degenerate)] = {
-            "street": "zero",
-            "borough": "MANHATTAN",
-            "geometry": LineString([(-73.980, 40.750), (-73.980, 40.750)]),
-        }
+        # Built via concat rather than .loc so the frame keeps its CRS. A row-wise
+        # .loc assignment drops it, and to_projected then refuses to guess.
+        extra = gpd.GeoDataFrame(
+            [
+                {
+                    "street": "zero",
+                    "borough": "MANHATTAN",
+                    "geometry": LineString([(-73.980, 40.750), (-73.980, 40.750)]),
+                }
+            ],
+            geometry="geometry",
+            crs=CRS_GEOGRAPHIC,
+        )
+        degenerate = gpd.GeoDataFrame(
+            pd.concat([centerline, extra], ignore_index=True),
+            geometry="geometry",
+            crs=CRS_GEOGRAPHIC,
+        )
+
         segments = build_segment_universe(degenerate)
         assert len(segments) == len(centerline) + 1
         assert segments["degenerate_length"].sum() == 1

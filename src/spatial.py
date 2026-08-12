@@ -259,7 +259,9 @@ def build_universe(centerline: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
 
     keep = ["unit_id", "unit_type", "geometry"]
     seg_cols = keep + [c for c in ("length_ft", "degenerate_length", "borough") if c in segments]
-    node_cols = keep + ["leg_count"]
+    # borough has to survive onto nodes too, or borough-stratified selection silently
+    # drops the entire intersection universe.
+    node_cols = keep + [c for c in ("leg_count", "borough") if c in nodes]
 
     universe = pd.concat(
         [segments[seg_cols], nodes[node_cols]], ignore_index=True, sort=False
@@ -457,7 +459,9 @@ def join_vzv_labels(
         vzv_p["geometry"] = vzv_p.geometry.buffer(buffer_ft)
 
         targets = out[out["unit_type"] == unit_type]
-        hits = gpd.sjoin(targets, vzv_p[["_vzv_idx", "geometry"]], how="inner", predicate="intersects")
+        hits = gpd.sjoin(
+            targets, vzv_p[["_vzv_idx", "geometry"]], how="inner", predicate="intersects"
+        )
 
         matched_units = set(hits["unit_id"])
         out.loc[out["unit_id"].isin(matched_units), "is_priority"] = True

@@ -251,18 +251,73 @@ class TestBootstrap:
         with pytest.raises(BacktestError, match="zero casualties"):
             bootstrap_capture_difference(empty, a, a, iterations=100)
 
-    def test_tiny_sample_widens_rather_than_fabricating_precision(self):
-        tiny = pd.DataFrame(
+    def test_single_casualty_unit_is_refused_not_reported(self):
+        """Too sparse to support an interval is a result, not a number to quote.
+
+        With casualties in one unit, roughly exp(-1) of resamples draw none of it and
+        have no denominator at all. An interval built on the survivors would look
+        precise and mean nothing.
+        """
+        sparse = pd.DataFrame(
             {
-                "unit_id": ["A", "B", "C"],
-                "holdout_casualties": [1, 0, 0],
-                "score": [1, 0, 0],
+                "unit_id": [f"U{i}" for i in range(20)],
+                "holdout_casualties": [1] + [0] * 19,
+                "score": [1] + [0] * 19,
+            }
+        )
+        a = Selection(name="R3", regime="citywide", unit_ids=["U0"])
+        b = Selection(name="R2", regime="citywide", unit_ids=["U1"])
+        with pytest.raises(BacktestError, match="concentrated in too few units"):
+            bootstrap_capture_difference(sparse, a, b, iterations=1000)
+
+    def test_a_few_degenerate_resamples_are_noted_not_fatal(self):
+        """Three casualty-bearing units out of five: ~1% degenerate, under the limit."""
+        borderline = pd.DataFrame(
+            {
+                "unit_id": ["A", "B", "C", "D", "E"],
+                "holdout_casualties": [3, 2, 1, 0, 0],
+                "score": [3, 2, 1, 0, 0],
             }
         )
         a = Selection(name="R3", regime="citywide", unit_ids=["A"])
-        b = Selection(name="R2", regime="citywide", unit_ids=["B"])
-        ci = bootstrap_capture_difference(tiny, a, b, iterations=1000)
+        b = Selection(name="R2", regime="citywide", unit_ids=["C"])
+        ci = bootstrap_capture_difference(borderline, a, b, iterations=2000)
+
+        assert np.isfinite(ci.lower_pp) and np.isfinite(ci.upper_pp)
+        assert ci.lower_pp <= ci.point_estimate_pp <= ci.upper_pp
+
+    def test_dense_holdout_has_no_degenerate_resamples(self):
+        dense = pd.DataFrame(
+            {
+                "unit_id": [f"U{i}" for i in range(10)],
+                "holdout_casualties": [5, 4, 3, 2, 1, 1, 1, 1, 1, 1],
+                "score": [5, 4, 3, 2, 1, 1, 1, 1, 1, 1],
+            }
+        )
+        a = Selection(name="R3", regime="citywide", unit_ids=["U0", "U1"])
+        b = Selection(name="R2", regime="citywide", unit_ids=["U8", "U9"])
+        ci = bootstrap_capture_difference(dense, a, b, iterations=2000)
+        assert ci.note == ""
+
+    def test_spread_out_casualties_produce_a_real_interval(self):
+        spread = pd.DataFrame(
+            {
+                "unit_id": [f"U{i}" for i in range(10)],
+                "holdout_casualties": [5, 4, 3, 2, 1, 1, 1, 1, 1, 1],
+                "score": [5, 4, 3, 2, 1, 1, 1, 1, 1, 1],
+            }
+        )
+        a = Selection(name="R3", regime="citywide", unit_ids=["U0", "U1"])
+        b = Selection(name="R2", regime="citywide", unit_ids=["U8", "U9"])
+        ci = bootstrap_capture_difference(spread, a, b, iterations=2000)
         assert ci.upper_pp - ci.lower_pp > 0
+
+    def test_threshold_is_reachable_by_construction(self):
+        """Guards that can never fire are decoration. This one has to be able to."""
+        from src.backtest import MAX_DEGENERATE_RESAMPLE_FRACTION
+
+        # A single casualty-bearing unit degenerates at about exp(-1) = 37%.
+        assert MAX_DEGENERATE_RESAMPLE_FRACTION < np.exp(-1)
 
 
 class TestPreregisteredBar:
