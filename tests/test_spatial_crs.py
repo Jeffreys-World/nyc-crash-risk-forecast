@@ -99,6 +99,61 @@ class TestSegmentUniverse:
         assert segments["degenerate_length"].sum() == 1
 
 
+class TestMultiPartGeometry:
+    """Regression: ISSUE-003 — a MultiLineString became one unit spanning two places.
+
+    Found by /qa on 2026-08-12.
+    Report: .gstack/qa-reports/qa-report-nyc-crash-risk-forecast-2026-08-12.md
+
+    DCP LION ships MultiLineStrings and is a live centerline candidate, so this would
+    have fired on the first real run against that source.
+    """
+
+    @pytest.fixture
+    def multipart(self):
+        from shapely.geometry import LineString, MultiLineString
+
+        geom = MultiLineString(
+            [
+                [(-73.980, 40.750), (-73.979, 40.750)],
+                [(-73.979, 40.751), (-73.978, 40.751)],
+            ]
+        )
+        return gpd.GeoDataFrame(
+            [
+                {"borough": "MANHATTAN", "geometry": geom},
+                {
+                    "borough": "MANHATTAN",
+                    "geometry": LineString([(-73.978, 40.752), (-73.977, 40.752)]),
+                },
+            ],
+            geometry="geometry",
+            crs=CRS_GEOGRAPHIC,
+        )
+
+    def test_multilinestring_explodes_into_one_unit_per_part(self, multipart):
+        segments = build_segment_universe(multipart)
+        assert len(segments) == 3  # 2 parts + 1 plain LineString
+
+    def test_no_multipart_geometry_survives(self, multipart):
+        segments = build_segment_universe(multipart)
+        assert (segments.geometry.geom_type == "LineString").all()
+
+    def test_exposure_is_not_the_sum_of_disconnected_pieces(self, multipart):
+        """The bug's real cost: a wrong exposure term feeds straight into the SPF."""
+        segments = build_segment_universe(multipart)
+        parts = segments.head(2)["length_ft"]
+        assert parts.iloc[0] < parts.sum()
+
+    def test_exploded_parts_keep_their_borough(self, multipart):
+        segments = build_segment_universe(multipart)
+        assert (segments["borough"] == "MANHATTAN").all()
+
+    def test_exploded_parts_get_unique_unit_ids(self, multipart):
+        segments = build_segment_universe(multipart)
+        assert not segments["unit_id"].duplicated().any()
+
+
 class TestNodeUniverse:
     def test_builds_nine_nodes_from_a_three_by_three_grid(self, centerline):
         segments = build_segment_universe(centerline)

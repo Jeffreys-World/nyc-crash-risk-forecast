@@ -171,6 +171,17 @@ def build_segment_universe(centerline: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
     assert_projected(segments, "centerline")
 
     segments = segments[segments.geometry.notna() & ~segments.geometry.is_empty].copy()
+
+    # Explode multi-part geometries into one row per LineString. A MultiLineString
+    # left intact becomes a single unit whose length is the sum of disconnected
+    # pieces, so its exposure term is wrong and the unit spans two places at once -
+    # crashes from both would pool into one risk score. DCP LION ships
+    # MultiLineStrings, and it is one of the live centerline candidates.
+    multipart = int((segments.geometry.geom_type == "MultiLineString").sum())
+    if multipart:
+        log.info("exploding %d multi-part centerline geometries into single parts", multipart)
+        segments = segments.explode(index_parts=False, ignore_index=True)
+
     segments["length_ft"] = segments.geometry.length
     segments["unit_type"] = "corridor"
     segments["unit_id"] = "C" + segments.index.astype(str)
