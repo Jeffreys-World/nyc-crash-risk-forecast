@@ -118,10 +118,29 @@ def fit_nb(
         )
 
     X = sm.add_constant(X, has_constant="add")
+    offset_values = offset.to_numpy()
 
-    model = sm.NegativeBinomial(y, X, loglike_method="nb2", offset=offset.to_numpy())
+    # Start the NB search from a Poisson fit rather than statsmodels' defaults.
+    #
+    # Poisson is NB2 in the limit as the dispersion goes to zero, so its coefficients
+    # are a principled starting point rather than a convenience. It matters here: with
+    # a mean of 0.022 casualties per corridor over 36 months, the outcome is almost all
+    # zeros, and from the default start the NB search did not converge in 200 iterations
+    # on the real citywide universe. From Poisson values it converges comfortably.
     try:
-        fit = model.fit(maxiter=maxiter, disp=False)
+        poisson = sm.GLM(
+            y, X, family=sm.families.Poisson(), offset=offset_values
+        ).fit()
+        start_params = list(poisson.params) + [1.0]  # trailing entry is alpha
+    except Exception as exc:
+        raise SPFError(
+            f"{unit_type}: could not fit the Poisson model used for starting values: "
+            f"{exc}"
+        ) from exc
+
+    model = sm.NegativeBinomial(y, X, loglike_method="nb2", offset=offset_values)
+    try:
+        fit = model.fit(start_params=start_params, maxiter=maxiter, disp=False)
     except Exception as exc:  # statsmodels raises a variety of linalg errors here
         raise SPFError(f"{unit_type}: negative-binomial fit failed: {exc}") from exc
 
