@@ -344,6 +344,18 @@ a story.
 - **No general claim that Empirical Bayes beats counting by 18 points.** The lift is
   2.1pp where both methods have crash history to work with. See
   [the N-sweep](#the-number-that-keeps-that-honest).
+- **No calibration claim.** The SPF is fit on 36-month trailing counts and scored against
+  a 24-month holdout, so predicted counts sit on a longer window than observed ones. The
+  model over-predicts by roughly the window ratio: observed/predicted is 0.56 on surface
+  streets and 0.78 on highways, against 24/36 = 0.67. **Ranking is unaffected** — the
+  scale factor is monotone, and a ranking is all this project claims — but the predicted
+  counts are not expected casualties for the holdout window and must not be read as such.
+- **Error analysis by road class, measured.** The model does *not* repeat the parent
+  dashboard's blind spot in reverse. Highways are 26.9% of units but carry only 6.4% of
+  pedestrian casualties, and the Empirical Bayes ranking selects 4.9% highway units
+  against the raw count's 20.2% — the model down-weights highways, correctly, because
+  pedestrians are rarely struck on them. The borough bar chart hid highway deaths by
+  accident; this model sets them aside on purpose, for a label that genuinely excludes them.
 - **No claim that highways are safe.** `is_highway` carries a negative coefficient here
   because pedestrians are rarely struck on limited-access roads, not because those roads
   are safe. This project's label is pedestrian casualties, so the highway finding that
@@ -410,7 +422,7 @@ whether it is worth wrapping in a tool.
 | ✅ Scope and method settled | Office-hours design review, eng review (7 findings, all folded in) |
 | ✅ Pipeline built and tested | Snapshot pull, universe, features, SPF, EB, backtest. 203 tests green |
 | ✅ Run against real data | Snapshot 2026-08-12, result above, one earlier run discarded |
-| ⏭ Next | Error analysis by road class; sensitivity of the result to the join radius |
+| ⏭ Next | Sensitivity of the result to the join radius; independent re-derivation |
 | ⏸ Gated | Streamlit page, budget slider, SHAP explainer, CI (Approach B) |
 | ⏸ Gated | The named-streets counterfactual (Approach C) |
 | 📋 Deferred, written up | Traffic-volume exposure ([TODOS.md](TODOS.md)) |
