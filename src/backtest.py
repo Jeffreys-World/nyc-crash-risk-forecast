@@ -266,6 +266,19 @@ def capture_rate(
     if casualty_col not in holdout.columns:
         raise BacktestError(f"holdout frame has no {casualty_col!r} column")
 
+    # A repeated unit_id counts its casualties into the denominator more than once and,
+    # if selected, into the numerator too. Both the rate and the published total would
+    # be wrong while still looking like a plausible percentage. build_universe already
+    # enforces uniqueness, so reaching here means a join fanned out - which is worth
+    # stopping for rather than absorbing.
+    duplicates = holdout["unit_id"].duplicated().sum()
+    if duplicates:
+        raise BacktestError(
+            f"holdout has {duplicates} duplicated unit_id(s). Casualties would be "
+            f"counted more than once in the capture-rate denominator. A join upstream "
+            f"fanned out; fix that rather than deduplicating here."
+        )
+
     casualties = pd.to_numeric(holdout[casualty_col], errors="coerce").fillna(0.0)
     total = float(casualties.sum())
 

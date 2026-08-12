@@ -245,6 +245,22 @@ class TestCaptureRate:
         result = capture_rate(select_citywide_top_n(empty, "score", 2, "R3"), empty)
         assert "UNDEFINED" in result.summary()
 
+    def test_duplicate_unit_id_raises_rather_than_double_counting(self):
+        """Regression: ISSUE-004 — a repeated unit_id inflated both sides of the rate.
+
+        Found by /qa on 2026-08-12.
+        Report: .gstack/qa-reports/qa-report-nyc-crash-risk-forecast-2026-08-12.md
+
+        Unit A appearing twice made the denominator 20 instead of 15 and the numerator
+        10 instead of 5. The result was a clean-looking 50% that was wrong twice over.
+        """
+        duplicated = pd.DataFrame(
+            {"unit_id": ["A", "A", "B"], "holdout_casualties": [5, 5, 10]}
+        )
+        selection = Selection(name="R3", regime="citywide", unit_ids=["A"])
+        with pytest.raises(BacktestError, match="duplicated unit_id"):
+            capture_rate(selection, duplicated)
+
     def test_missing_casualty_column_raises(self, holdout):
         selection = select_citywide_top_n(holdout, "score", 2, "R3")
         with pytest.raises(BacktestError, match="holdout_casualties"):
