@@ -25,6 +25,7 @@ number without raising anything.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from dataclasses import dataclass, field
 
@@ -71,18 +72,44 @@ class Selection:
         return len(self.unit_ids)
 
 
-def _ordered(units: pd.DataFrame, score_col: str) -> pd.DataFrame:
-    """Rank by score descending, breaking ties on unit_id ascending.
+def _tiebreak_key(unit_ids: pd.Series) -> pd.Series:
+    """A deterministic, content-free ordering key for units with equal scores.
 
-    Ties at the selection boundary are common: many units share a trailing count of 1.
-    Without an explicit tie-break, pandas' sort order decides which ones make the cut,
-    and the headline number changes between machines and between runs.
+    Must be arbitrary AND uncorrelated with anything that predicts the outcome.
+    Sorting ties on `unit_id` itself failed the second half: ids are `C…` for corridors
+    and `I…` for intersections, so `"C" < "I"` put every corridor ahead of every
+    intersection. Most units have a trailing count of zero, so the naive baseline spent
+    its whole quota on alphabetically-early corridors, which hold 14% of casualties
+    while intersections hold 86%. That handicapped the very baseline the model is
+    scored against and inflated the measured lift.
+
+    A hash breaks the correlation while staying identical across machines and runs.
+    Python's built-in `hash()` would not: it is salted per process unless PYTHONHASHSEED
+    is pinned, so the headline number would move between runs.
+    """
+    return unit_ids.astype(str).map(
+        lambda uid: int.from_bytes(
+            hashlib.blake2b(uid.encode("utf-8"), digest_size=8).digest(), "big"
+        )
+    )
+
+
+def _ordered(units: pd.DataFrame, score_col: str) -> pd.DataFrame:
+    """Rank by score descending, breaking ties on a stable hash of unit_id.
+
+    Ties at the selection boundary are the common case, not the exception: most units
+    have a trailing casualty count of zero. Without an explicit tie-break, pandas' sort
+    order decides who makes the cut and the headline number moves between machines.
     """
     if score_col not in units.columns:
         raise BacktestError(f"score column {score_col!r} not present")
-    return units.sort_values(
-        [score_col, "unit_id"], ascending=[False, True], kind="mergesort"
+
+    ordered = units.copy()
+    ordered["_tiebreak"] = _tiebreak_key(ordered["unit_id"])
+    ordered = ordered.sort_values(
+        [score_col, "_tiebreak"], ascending=[False, True], kind="mergesort"
     )
+    return ordered.drop(columns=["_tiebreak"])
 
 
 def select_citywide_top_n(
@@ -372,18 +399,29 @@ def bootstrap_capture_difference(
     diffs = np.empty(iterations, dtype=float)
     degenerate = 0
 
+    # Precomputed per-unit contributions. A resample's captured total is
+    # sum_j values[idx[j]] * in_a[idx[j]], which is the same as sum_i w_i * values[i] *
+    # in_a[i] where w_i counts how often unit i was drawn. So one bincount plus three
+    # dot products replaces four fancy-index gathers over ~150k units, and the draw
+    # sequence is untouched, so results stay bit-identical to the naive form.
+    #
+    # This matters at real scale: the citywide universe is ~150k units, and the gather
+    # form takes tens of minutes for 10,000 iterations. Nobody re-runs a repro that
+    # costs an hour.
+    values_a = values * in_a
+    values_b = values * in_b
+
     for i in range(iterations):
         idx = rng.integers(0, n, size=n)
-        total = values[idx].sum()
+        counts = np.bincount(idx, minlength=n)
+        total = counts @ values
         if total <= 0:
             # A resample that drew only zero-casualty units has no denominator.
             # Counted and excluded rather than contributing a NaN to the percentiles.
             diffs[i] = np.nan
             degenerate += 1
             continue
-        diffs[i] = 100.0 * (
-            values[idx][in_a[idx]].sum() / total - values[idx][in_b[idx]].sum() / total
-        )
+        diffs[i] = 100.0 * ((counts @ values_a) / total - (counts @ values_b) / total)
 
     usable = diffs[np.isfinite(diffs)]
     degenerate_fraction = degenerate / iterations

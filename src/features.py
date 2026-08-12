@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
 
-from src.config import MIN_SEGMENT_LENGTH_FT, TRAILING_MONTHS
+from src.config import MIN_SEGMENT_LENGTH_FT, ROAD_NUMERIC_COLUMNS, TRAILING_MONTHS
 
 log = logging.getLogger(__name__)
 
@@ -176,6 +176,61 @@ def exposure_term(
 # --------------------------------------------------------------------------------------
 # Trailing counts
 # --------------------------------------------------------------------------------------
+
+
+def impute_road_attributes(
+    units: pd.DataFrame,
+    columns: tuple[str, ...] = ROAD_NUMERIC_COLUMNS,
+    report: FeatureReport | None = None,
+) -> tuple[pd.DataFrame, FeatureReport]:
+    """Median-impute missing road characteristics, and flag that it happened.
+
+    17.6% of centerline segments carry no posted speed, and 7% no lane count or width.
+    Letting those rows fall out of the fit would repeat, inside this model, the exact
+    failure the project was built to expose: NYC's borough bar chart drops 32% of
+    crashes because one field is blank, and the dropped rows are the deadlier ones.
+
+    So the value is imputed rather than dropped, and `road_attrs_imputed` carries the
+    fact into the model as its own predictor. If imputed sites behave differently, the
+    coefficient says so out loud instead of the difference vanishing with the rows.
+    Median rather than mean because these are bounded, lumpy quantities (speeds cluster
+    at 25, lanes at 2) where a mean invents values that no street has.
+    """
+    report = report or FeatureReport()
+    out = units.copy()
+
+    present = [c for c in columns if c in out.columns]
+    if not present:
+        out["road_attrs_imputed"] = 0
+        return out, report
+
+    missing_any = out[present].isna().any(axis=1)
+    out["road_attrs_imputed"] = missing_any.astype(int)
+
+    for column in present:
+        values = pd.to_numeric(out[column], errors="coerce")
+        n_missing = int(values.isna().sum())
+        if not n_missing:
+            out[column] = values
+            continue
+
+        # Within unit_type: a corridor's typical width is not an intersection's.
+        filled = values.fillna(values.groupby(out["unit_type"]).transform("median"))
+        filled = filled.fillna(values.median())
+        out[column] = filled
+
+        report.notes.append(f"{column}: imputed {n_missing} missing value(s) with median")
+        log.info("%s: imputed %d missing value(s)", column, n_missing)
+
+    still_missing = int(out[present].isna().any(axis=1).sum())
+    if still_missing:
+        raise FeatureError(
+            f"{still_missing} unit(s) still have a missing road attribute after "
+            f"imputation. The median itself was undefined, which means the column is "
+            f"empty rather than sparse."
+        )
+
+    return out, report
 
 
 def trailing_casualties(
@@ -355,6 +410,7 @@ def build_features(
     report = FeatureReport()
 
     features, report = exposure_term(units, report)
+    features, report = impute_road_attributes(features, report=report)
     features, report = trailing_casualties(assigned, features, as_of, months, report)
     features = factor_mix(assigned, features, as_of)
     features = temporal_concentration(assigned, features, as_of)

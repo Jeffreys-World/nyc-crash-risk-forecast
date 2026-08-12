@@ -38,6 +38,7 @@ from src.config import (
     HOLDOUT_YEARS,
     PROCESSED_DIR,
     RAW_DIR,
+    SPF_PREDICTORS,
     TRAIN_YEARS,
 )
 from src.features import add_pedestrian_casualties, build_features
@@ -56,7 +57,9 @@ TRAIN_END = pd.Timestamp(f"{TRAIN_YEARS[1] + 1}-01-01")
 HOLDOUT_START = TRAIN_END
 HOLDOUT_END = pd.Timestamp(f"{HOLDOUT_YEARS[1] + 1}-01-01")
 
-PREDICTORS = ["night_share", "weekend_share", "factor_unspecified"]
+# Site characteristics, not crash history. See SPF_PREDICTORS in src/config.py for why
+# the crash-derived features that were here on the 2026-08-12 run are gone.
+PREDICTORS = list(SPF_PREDICTORS)
 
 
 @dataclass
@@ -290,19 +293,28 @@ def run(snapshot: Path | None = None, use_cache: bool = True) -> RunSummary:
     out.write_text(json.dumps(asdict(summary), indent=2, default=str) + "\n")
     log.info("wrote %s", out)
 
-    ranked = scored.nlargest(50, "eb_estimate")[
-        [
-            "unit_id",
-            "unit_type",
-            "borough",
-            "full_street_name",
-            "eb_estimate",
-            "casualties_36mo",
-            "holdout_casualties",
-            "is_priority",
-            "treated",
-        ]
+    # Selected defensively: an older cached units parquet may predate a carried column,
+    # and losing the ranked CSV to a KeyError after a multi-minute fit is a poor trade.
+    wanted = [
+        "unit_id",
+        "unit_type",
+        "borough",
+        "full_street_name",
+        "rw_type",
+        "eb_estimate",
+        "casualties_36mo",
+        "holdout_casualties",
+        "is_priority",
+        "treated",
     ]
+    available = [c for c in wanted if c in scored.columns]
+    missing = [c for c in wanted if c not in scored.columns]
+    if missing:
+        log.warning(
+            "ranked output is missing %s - rebuild with --no-cache to pick them up",
+            ", ".join(missing),
+        )
+    ranked = scored.nlargest(50, "eb_estimate")[available]
     ranked.to_csv(PROCESSED_DIR / "top-50-ranked.csv", index=False)
 
     return summary

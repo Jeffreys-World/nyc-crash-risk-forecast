@@ -33,6 +33,8 @@ from src.config import (
     MAX_JOIN_DISTANCE_FT,
     MIN_SEGMENT_LENGTH_FT,
     NYC_BOUNDS_FT,
+    ROAD_NUMERIC_COLUMNS,
+    ROADWAY_TYPE_STREET,
 )
 
 log = logging.getLogger(__name__)
@@ -186,6 +188,20 @@ def build_segment_universe(centerline: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
     segments["unit_type"] = "corridor"
     segments["unit_id"] = "C" + segments.index.astype(str)
 
+    # Socrata serves every field as a string. Coerced here so the SPF sees numbers
+    # rather than silently dropping the column at fit time.
+    for column in ROAD_NUMERIC_COLUMNS:
+        if column in segments.columns:
+            segments[column] = pd.to_numeric(segments[column], errors="coerce")
+
+    # rw_type 1 is a surface street; every higher code is a highway, ramp, or bridge.
+    # This is the limited-access-highway signal the founding borough-gap finding turned
+    # on, so the model gets to see it explicitly instead of rediscovering it.
+    if "rw_type" in segments.columns:
+        segments["is_highway"] = (
+            segments["rw_type"].astype(str).str.strip() != ROADWAY_TYPE_STREET
+        ).astype(int)
+
     degenerate = int((segments["length_ft"] < MIN_SEGMENT_LENGTH_FT).sum())
     if degenerate:
         log.warning(
@@ -209,9 +225,9 @@ def build_node_universe(segments: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
     assert_projected(segments, "segments")
 
     has_borough = "borough" in segments.columns
-    endpoints: list[tuple[float, float]] = []
-    boroughs: list[object] = []
+    attribute_cols = [c for c in (*ROAD_NUMERIC_COLUMNS, "is_highway") if c in segments.columns]
 
+    records: list[dict[str, object]] = []
     for row in segments.itertuples():
         geom = row.geometry
         if geom is None or geom.is_empty:
@@ -224,13 +240,17 @@ def build_node_universe(segments: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
             continue
         # Round to the foot so float noise does not split one intersection into two.
         for x, y in coords:
-            endpoints.append((round(x, 0), round(y, 0)))
-            boroughs.append(getattr(row, "borough", None) if has_borough else None)
+            record: dict[str, object] = {"xy": (round(x, 0), round(y, 0))}
+            if has_borough:
+                record["borough"] = getattr(row, "borough", None)
+            for column in attribute_cols:
+                record[column] = getattr(row, column, None)
+            records.append(record)
 
-    if not endpoints:
+    if not records:
         raise SpatialJoinError("no segment endpoints found; cannot build nodes")
 
-    endpoint_frame = pd.DataFrame({"xy": endpoints, "borough": boroughs})
+    endpoint_frame = pd.DataFrame.from_records(records)
     counts = endpoint_frame["xy"].value_counts()
     junctions = counts[counts >= 2]
 
@@ -251,6 +271,21 @@ def build_node_universe(segments: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
         )
         data["borough"] = [modal.get(xy) for xy in junctions.index]
 
+    # An intersection has no geometry of its own, so its road characteristics are those
+    # of the streets meeting there. The aggregations are chosen to describe the worst
+    # approach rather than the average one: a junction where one leg is a 50mph highway
+    # ramp is a highway junction, and averaging that away would hide exactly the site
+    # type the founding finding is about.
+    aggregations = {
+        "posted_speed": "max",
+        "streetwidth": "max",
+        "number_travel_lanes": "sum",
+        "is_highway": "max",
+    }
+    for column in attribute_cols:
+        grouped = endpoint_frame.groupby("xy")[column].agg(aggregations[column])
+        data[column] = [grouped.get(xy) for xy in junctions.index]
+
     nodes = gpd.GeoDataFrame(
         data, geometry=[Point(xy) for xy in junctions.index], crs=CRS_PROJECTED
     )
@@ -269,10 +304,34 @@ def build_universe(centerline: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
     nodes = build_node_universe(segments)
 
     keep = ["unit_id", "unit_type", "geometry"]
-    seg_cols = keep + [c for c in ("length_ft", "degenerate_length", "borough") if c in segments]
+    # `full_street_name` and `rw_type` are carried, not dropped, because both are load
+    # bearing for this project's argument rather than decoration:
+    #
+    #   full_street_name  is the entire reason the unit of analysis is a named
+    #                     centerline segment instead of an anonymous ~100m grid cell.
+    #                     A ranked list a DOT budget-holder can act on says "Broadway
+    #                     from W 135th to W 153rd", not "cell 31847".
+    #   rw_type           distinguishes limited-access highway from surface street.
+    #                     The founding finding of this project is that the rows with no
+    #                     borough are highway rows and are deadlier, so a model that
+    #                     cannot tell the two apart cannot check whether it repeats the
+    #                     same blind spot.
+    carried = (
+        "length_ft",
+        "degenerate_length",
+        "borough",
+        "full_street_name",
+        "rw_type",
+        *ROAD_NUMERIC_COLUMNS,
+        "is_highway",
+    )
+    seg_cols = keep + [c for c in carried if c in segments]
     # borough has to survive onto nodes too, or borough-stratified selection silently
-    # drops the entire intersection universe.
-    node_cols = keep + [c for c in ("leg_count", "borough") if c in nodes]
+    # drops the entire intersection universe. The road characteristics ride along for
+    # the same reason they do on segments: they are the SPF's predictors.
+    node_cols = keep + [
+        c for c in ("leg_count", "borough", *ROAD_NUMERIC_COLUMNS, "is_highway") if c in nodes
+    ]
 
     universe = pd.concat(
         [segments[seg_cols], nodes[node_cols]], ignore_index=True, sort=False
@@ -462,9 +521,16 @@ def join_vzv_labels(
     out["is_priority"] = False
     out["vzv_source"] = pd.NA
 
-    for label, vzv, unit_type in (
-        ("corridor", vzv_corridors, "corridor"),
-        ("intersection", vzv_intersections, "intersection"),
+    # A VZV priority corridor is a stretch of street *including its junctions*, so it
+    # labels both segments and the nodes along it. Restricting corridor labels to
+    # segments was wrong and badly so: crashes within 100ft of a junction are assigned
+    # to the node, 86% of pedestrian casualties happen at intersections, and the nodes
+    # along a priority corridor were left unlabelled. DOT's list was structurally
+    # prevented from capturing the casualties it was selected for, which showed up on
+    # the 2026-08-12 run as an implausible 11.9% capture rate.
+    for label, vzv, unit_types in (
+        ("corridor", vzv_corridors, ("corridor", "intersection")),
+        ("intersection", vzv_intersections, ("intersection",)),
     ):
         if vzv is None or vzv.empty:
             log.warning("VZV %s layer is empty; no priority labels applied", label)
@@ -476,7 +542,7 @@ def join_vzv_labels(
         vzv_p["_vzv_idx"] = range(len(vzv_p))
         vzv_p["geometry"] = vzv_p.geometry.buffer(buffer_ft)
 
-        targets = out[out["unit_type"] == unit_type]
+        targets = out[out["unit_type"].isin(unit_types)]
         hits = gpd.sjoin(
             targets, vzv_p[["_vzv_idx", "geometry"]], how="inner", predicate="intersects"
         )

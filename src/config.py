@@ -167,6 +167,28 @@ CENTERLINE_SOURCE: SocrataSource | None = SocrataSource(
 # discarded.
 ROADWAY_TYPE_STREET = "1"
 
+# Road characteristics used as SPF predictors.
+#
+# These describe the SITE, not its crash history, and that distinction is the whole
+# point. An HSM Safety Performance Function predicts expected crashes from geometry and
+# exposure; the observed crash record enters separately, through the Empirical Bayes
+# blend. Feeding crash-derived features (night share, contributing-factor mix) into the
+# SPF double-counts the very history EB exists to weigh, and it produced a degenerate
+# fit on the 2026-08-12 run: intercept -29.5, night_share +21.9, and 74% of the city
+# predicted at exp(-30). Those features were really encoding "did this unit ever have a
+# crash", because they are 0.0 both for a unit with no crashes and for a unit whose
+# crashes were all in daylight.
+SPF_PREDICTORS = (
+    "posted_speed",
+    "number_travel_lanes",
+    "streetwidth",
+    "is_highway",
+    "road_attrs_imputed",
+)
+
+# Raw numeric columns lifted from the centerline. Socrata serves everything as strings.
+ROAD_NUMERIC_COLUMNS = ("posted_speed", "number_travel_lanes", "streetwidth")
+
 # --------------------------------------------------------------------------------------
 # Coordinate reference systems
 # --------------------------------------------------------------------------------------

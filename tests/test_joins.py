@@ -39,14 +39,34 @@ class TestVZVLabels:
         labelled, _ = join_vzv_labels(universe, vzv_corridors, vzv_intersections)
         assert len(labelled) == len(universe)
 
-    def test_corridor_labels_do_not_leak_onto_intersections(
+    def test_corridor_labels_reach_the_nodes_along_the_corridor(
         self, universe, vzv_corridors, vzv_intersections
     ):
+        """Deliberate reversal of an earlier assertion, which encoded a real bug.
+
+        This test previously asserted corridor labels must NOT touch intersections.
+        That was wrong. A VZV priority corridor is a stretch of street including its
+        junctions, and crashes within 100ft of a junction are assigned to the node. With
+        86% of pedestrian casualties occurring at intersections, leaving those nodes
+        unlabelled meant DOT's list could not capture the casualties it was chosen for.
+        """
         labelled, _ = join_vzv_labels(universe, vzv_corridors, vzv_intersections)
-        corridor_labelled = labelled[
-            (labelled["vzv_source"] == "corridor") & (labelled["unit_type"] != "corridor")
+        nodes_on_corridor = labelled[
+            (labelled["unit_type"] == "intersection") & labelled["is_priority"]
         ]
-        assert corridor_labelled.empty
+        assert not nodes_on_corridor.empty
+
+    def test_intersection_layer_never_labels_corridors(
+        self, universe, vzv_corridors, vzv_intersections
+    ):
+        """The reverse direction stays closed: a priority point is not a priority street."""
+        import geopandas as gpd
+
+        empty = gpd.GeoDataFrame(
+            {"name": []}, geometry=gpd.GeoSeries([], crs=CRS_GEOGRAPHIC), crs=CRS_GEOGRAPHIC
+        )
+        labelled, _ = join_vzv_labels(universe, empty, vzv_intersections)
+        assert labelled.loc[labelled["unit_type"] == "corridor", "is_priority"].sum() == 0
 
     def test_empty_vzv_layer_labels_nothing_and_does_not_raise(self, universe, vzv_intersections):
         empty = gpd.GeoDataFrame(

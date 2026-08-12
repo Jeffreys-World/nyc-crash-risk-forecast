@@ -79,14 +79,53 @@ class TestTieBreaking:
             }
         )
 
-    def test_ties_break_on_unit_id_ascending(self, all_tied):
-        selection = select_citywide_top_n(all_tied, "score", 2, "R3")
-        assert selection.unit_ids == ["C0", "C1"]
+    def test_ties_are_deterministic_across_calls(self, all_tied):
+        first = select_citywide_top_n(all_tied, "score", 2, "R3").unit_ids
+        second = select_citywide_top_n(all_tied, "score", 2, "R3").unit_ids
+        assert first == second
 
     def test_result_is_stable_across_row_ordering(self, all_tied):
         first = select_citywide_top_n(all_tied, "score", 2, "R3").unit_ids
         shuffled = all_tied.sample(frac=1, random_state=7).reset_index(drop=True)
         assert select_citywide_top_n(shuffled, "score", 2, "R3").unit_ids == first
+
+    def test_tiebreak_does_not_favour_one_unit_type(self):
+        """Regression: the tie-break was silently rigging the naive baseline.
+
+        Found on the 2026-08-12 run. Unit ids are `C…` for corridors and `I…` for
+        intersections, and ties sorted on unit_id ascending, so `"C" < "I"` put every
+        corridor ahead of every intersection. Most units have a trailing count of zero,
+        so the baseline spent its entire quota on corridors, which hold 14% of
+        casualties against the intersections' 86%. The measured lift was inflated by
+        alphabetical order.
+
+        A tie-break must be arbitrary but uncorrelated with anything predicting the
+        outcome. With 500 tied units of each type and 500 picks, a correlated key gives
+        500/0; an uncorrelated one lands near 250/250.
+        """
+        n = 500
+        tied = pd.DataFrame(
+            {
+                "unit_id": [f"C{i}" for i in range(n)] + [f"I{i}" for i in range(n)],
+                "unit_type": ["corridor"] * n + ["intersection"] * n,
+                "borough": "MANHATTAN",
+                "score": 0,
+                "holdout_casualties": 0,
+            }
+        )
+        picked = select_citywide_top_n(tied, "score", n, "R2")
+        chosen = tied[tied["unit_id"].isin(picked.unit_ids)]
+        corridors = int((chosen["unit_type"] == "corridor").sum())
+
+        assert 0.35 * n < corridors < 0.65 * n, (
+            f"tie-break favoured one unit type: {corridors}/{n} corridors"
+        )
+
+    def test_tiebreak_is_stable_across_processes(self):
+        """Python's built-in hash() is salted per process; this key must not be."""
+        from src.backtest import _tiebreak_key
+
+        assert _tiebreak_key(pd.Series(["C0"])).iloc[0] == 10475129511078190953
 
 
 class TestBoroughStratifiedSelection:
