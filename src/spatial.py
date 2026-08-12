@@ -197,32 +197,51 @@ def build_node_universe(segments: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
     """
     assert_projected(segments, "segments")
 
+    has_borough = "borough" in segments.columns
     endpoints: list[tuple[float, float]] = []
-    for geom in segments.geometry:
+    boroughs: list[object] = []
+
+    for row in segments.itertuples():
+        geom = row.geometry
         if geom is None or geom.is_empty:
             continue
-        coords = list(geom.coords) if geom.geom_type == "LineString" else []
         if geom.geom_type == "MultiLineString":
             coords = [c for part in geom.geoms for c in (part.coords[0], part.coords[-1])]
-        elif coords:
-            coords = [coords[0], coords[-1]]
+        elif geom.geom_type == "LineString":
+            coords = [geom.coords[0], geom.coords[-1]]
+        else:
+            continue
         # Round to the foot so float noise does not split one intersection into two.
-        endpoints.extend((round(x, 0), round(y, 0)) for x, y in coords)
+        for x, y in coords:
+            endpoints.append((round(x, 0), round(y, 0)))
+            boroughs.append(getattr(row, "borough", None) if has_borough else None)
 
     if not endpoints:
         raise SpatialJoinError("no segment endpoints found; cannot build nodes")
 
-    counts = pd.Series(endpoints).value_counts()
+    endpoint_frame = pd.DataFrame({"xy": endpoints, "borough": boroughs})
+    counts = endpoint_frame["xy"].value_counts()
     junctions = counts[counts >= 2]
 
+    data: dict[str, object] = {
+        "unit_id": [f"I{i}" for i in range(len(junctions))],
+        "unit_type": "intersection",
+        "leg_count": junctions.to_numpy(),
+    }
+
+    if has_borough:
+        # A node inherits the borough of the streets meeting there. Without this,
+        # every intersection would be borough-less and borough-stratified selection
+        # would silently drop the entire intersection universe.
+        modal = (
+            endpoint_frame.dropna(subset=["borough"])
+            .groupby("xy")["borough"]
+            .agg(lambda s: s.mode().iat[0] if not s.mode().empty else None)
+        )
+        data["borough"] = [modal.get(xy) for xy in junctions.index]
+
     nodes = gpd.GeoDataFrame(
-        {
-            "unit_id": [f"I{i}" for i in range(len(junctions))],
-            "unit_type": "intersection",
-            "leg_count": junctions.to_numpy(),
-        },
-        geometry=[Point(xy) for xy in junctions.index],
-        crs=CRS_PROJECTED,
+        data, geometry=[Point(xy) for xy in junctions.index], crs=CRS_PROJECTED
     )
     log.info("built %d intersection nodes from %d segments", len(nodes), len(segments))
     return nodes
