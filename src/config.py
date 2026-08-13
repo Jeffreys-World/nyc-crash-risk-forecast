@@ -212,7 +212,71 @@ MAX_JOIN_DISTANCE_FT = 150.0
 # and assigned to the node rather than to the adjoining segment. This mirrors how crash
 # records are conventionally classified, and it matters because DOT's priority list
 # ranks corridors and intersections as separate universes with separate stopping rules.
+#
+# Of the three distances here, this is the one the 2026-08-13 sweep found the headline
+# actually turns on: 50 / 100 / 150 ft give a lift of +16.1 / +18.4 / +19.9pp, roughly
+# 2pp per 50 ft, with nothing else moving - same N, same crashes assigned, same
+# capture-rate denominator. Only which unit each crash lands on changes. Anything that
+# revisits this value should re-run `scripts/radius_sensitivity.py` and say what moved.
 INTERSECTION_RADIUS_FT = 100.0
+
+# How far a VZV priority feature reaches when deciding which units are on DOT's list.
+# The VZV geometry and the centerline are two independent renderings of the same street,
+# so they do not lie exactly on top of each other; the buffer absorbs that offset.
+#
+# It sets `is_priority`, which is both R1's footprint *and* N, the size of every
+# ranking's selection - so widening it moves all three capture rates at once. The sweep
+# showed that is exactly what happens and no more: 25 / 50 / 100 ft put 35,461 / 38,909 /
+# 43,111 units on the list, and the lift at each tracks the published N-sweep. The
+# labelling is not separately sensitive; N is.
+VZV_BUFFER_FT = 50.0
+
+# The same idea for Street Improvement Projects. Kept separate because it only decides
+# the treated/untreated split, never the headline.
+SIP_BUFFER_FT = 50.0
+
+
+@dataclass(frozen=True)
+class JoinRadii:
+    """The three distances that decide what lands where.
+
+    Bundled rather than read from module scope at each call site so a sensitivity run
+    can vary them, and — the part that matters — so the *effective* values can reach the
+    units cache key. Keyed on file contents alone, an override applied in memory leaves
+    the fingerprint unchanged and the run silently reuses units built at a different
+    radius, which is the stale-cache correctness bug this project already fixed once.
+    """
+
+    max_join_distance_ft: float = MAX_JOIN_DISTANCE_FT
+    intersection_radius_ft: float = INTERSECTION_RADIUS_FT
+    vzv_buffer_ft: float = VZV_BUFFER_FT
+
+    @property
+    def tag(self) -> str:
+        """Compact, readable cache-key fragment: `j150-i100-v50`.
+
+        Readable rather than hashed on purpose. A sweep leaves one parquet per setting
+        in `data/cache/`, and being able to tell them apart by looking is worth more
+        than six characters of path.
+        """
+        def _n(value: float) -> str:
+            return f"{value:g}"
+
+        return (
+            f"j{_n(self.max_join_distance_ft)}"
+            f"-i{_n(self.intersection_radius_ft)}"
+            f"-v{_n(self.vzv_buffer_ft)}"
+        )
+
+    def as_dict(self) -> dict[str, float]:
+        return {
+            "max_join_distance_ft": self.max_join_distance_ft,
+            "intersection_radius_ft": self.intersection_radius_ft,
+            "vzv_buffer_ft": self.vzv_buffer_ft,
+        }
+
+
+DEFAULT_RADII = JoinRadii()
 
 # Coordinates NYC's feed emits for "no geocode." Real (0, 0) is in the Gulf of Guinea.
 NULL_ISLAND = (0.0, 0.0)

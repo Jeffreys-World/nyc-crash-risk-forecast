@@ -1,0 +1,57 @@
+name: tests
+
+# The suite exists to catch three silent failure modes — a CRS mismatch measured in
+# degrees, a log(0) exposure offset, and a zero-denominator capture rate — plus
+# regressions on the nine bugs two QA passes turned up. None of that protects anything
+# unless it runs without being remembered, which is what this file is for.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# A force-push or a quick second commit should cancel the older run rather than race it.
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      # One interpreter failing should not hide the other's result.
+      fail-fast: false
+      matrix:
+        # 3.12 is what the local venv and the README's reproduction path use. 3.11 is
+        # the floor `requires-python` advertises, and an advertised floor nobody runs is
+        # a claim rather than a fact.
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      # Deliberately the same two commands the README's "Reproducing this" section
+      # gives a reader. If CI needs a different incantation to get green, the
+      # instructions in the README are wrong and nobody finds out.
+      - name: Create the environment
+        run: |
+          uv venv --python ${{ matrix.python-version }}
+          uv pip install -e ".[dev]"
+
+      - name: Lint
+        run: .venv/bin/ruff check .
+
+      # No secrets and no network. Every stage is covered against a synthetic fixture
+      # city, so a clean clone with nothing pulled runs the whole suite. The one skip is
+      # in `test_secrets.py`, which checks a local `.env` when one exists; a fresh
+      # checkout has none, and skipping is the correct outcome. `-rs` prints it, so a
+      # test that starts skipping for some other reason is visible rather than silent.
+      - name: Test
+        run: .venv/bin/python -m pytest -rs

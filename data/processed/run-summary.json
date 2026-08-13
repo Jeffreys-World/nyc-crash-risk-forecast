@@ -1,5 +1,5 @@
 {
-  "snapshot_date": "2026-08-12",
+  "snapshot_date": "2026-08-13",
   "crashes_pulled": 1541146,
   "crashes_assigned": 1405552,
   "crashes_dropped": 135594,
@@ -12,8 +12,8 @@
   "holdout_window": "2024-2025",
   "holdout_casualties": 18059,
   "dispersion": {
-    "corridor": 5.704696484221117,
-    "intersection": 2.59507661259646
+    "corridor": 5.704696484226898,
+    "intersection": 2.5950766125964857
   },
   "citywide_n": 38909,
   "r1_citywide_pp": 48.74024032338446,
@@ -31,5 +31,10 @@
   "treated_during_holdout_pp": 56.28140703517588,
   "untreated_pp": 34.9269588313413,
   "treated_before_holdout_units": 57772,
-  "treated_during_holdout_units": 4092
+  "treated_during_holdout_units": 4092,
+  "join_radii": {
+    "max_join_distance_ft": 150.0,
+    "intersection_radius_ft": 100.0,
+    "vzv_buffer_ft": 50.0
+  }
 }

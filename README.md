@@ -205,6 +205,65 @@ as a single headline number.
 
 ---
 
+## Does the headline survive its own judgement calls?
+
+Three distances sit underneath every number above, and all three were chosen by
+judgement rather than measured:
+
+| Constant | Value | What it decides |
+|---|---:|---|
+| `MAX_JOIN_DISTANCE_FT` | 150 ft | How far a crash may be from a street and still attach to it |
+| `INTERSECTION_RADIUS_FT` | 100 ft | How close to a junction a crash must be to count as intersection-related rather than mid-block |
+| `VZV_BUFFER_FT` | 50 ft | How far a DOT priority feature reaches when deciding which units are on the published list |
+
+Nothing distinguishes 150 ft from 100 or 250 except that someone had to pick one. So
+`scripts/radius_sensitivity.py` re-runs the entire backtest across all three knobs, one
+at a time, holding the other two at their published values
+([full table](data/processed/radius-sensitivity.md)):
+
+| Knob | Swept (published value in bold) | Lift at each |
+|---|---|---|
+| Corridor join distance | 100 / **150** / 250 ft | +18.6 / **+18.4** / +18.4pp |
+| VZV label buffer | 25 / **50** / 100 ft | +17.1 / **+18.4** / +19.6pp |
+| Intersection radius | 50 / **100** / 150 ft | +16.1 / **+18.4** / +19.9pp |
+
+**The lift spans +16.1pp to +19.9pp. Every one of the nine settings clears the
+pre-registered 5pp bar, and every confidence interval excludes zero.** The finding is not
+an artifact of three unexamined numbers.
+
+The three knobs are not equally important, and the reasons are worth separating:
+
+- **The corridor join distance barely registers.** It only decides whether a crash far
+  from any street is assigned at all — 1,947 crashes out of 1.4 million. Widening it to
+  250 ft moves the lift by 0.06pp. This one was never load-bearing.
+
+- **The VZV buffer moves the lift, but through N, not through labeling.** A wider buffer
+  puts more units on DOT's list — 35,461 at 25 ft, 38,909 at 50 ft, 43,111 at 100 ft —
+  and every ranking is sized to match. The lift it produces at each N tracks
+  [the N-sweep](#the-number-that-keeps-that-honest) already published above. This is the
+  same finding arriving through a different door, not a new sensitivity.
+
+- **The intersection radius is the one that genuinely matters.** It changes nothing else:
+  N stays at 38,909, the same 1,405,552 crashes are assigned, and the capture-rate
+  denominator stays at 18,059. Only *which unit* each crash lands on moves. Widening it
+  from 50 ft to 150 ft takes the lift from +16.1pp to +19.9pp — roughly 2pp per 50 ft.
+  A wider radius pulls casualties off the 136,537 segments and onto the 83,496 nodes,
+  concentrating them into a smaller universe. Both rankings capture more (R2 goes
+  61.9% → 66.5%), and the Empirical Bayes ranking gains faster than the raw count does.
+
+**The published setting is not the flattering one.** On two of the three axes, a
+different and equally defensible choice would have produced a *larger* headline: 150 ft
+on the intersection radius gives +19.9pp, and a 100 ft VZV buffer gives +19.6pp. 150 /
+100 / 50 sits in the middle of every range, which is what it should look like when the
+values were picked before the result existed.
+
+What this does *not* license is quoting +18.4 as a constant. The qualitative claim —
+Empirical Bayes substantially out-captures raw counting at DOT's list size — holds
+across every setting tested. The specific decimal carries about ±2pp of dependence on
+one judgement call about what "at an intersection" means.
+
+---
+
 ## Three honesty constraints built into the method
 
 ### 1. The label is pedestrian casualties, not KSI
@@ -260,7 +319,16 @@ pipeline reads only snapshots, never the API.
 | Street Improvement Projects — Intersections | `79sh-heg3` | Treatment flag and date |
 | Street centerline | `inkn-q76z` | The candidate universe, segment length, borough, road class |
 
-**Snapshot vintage:** `2026-08-12`
+**Snapshot vintage:** `2026-08-13`
+
+The committed artifacts were regenerated from a fresh pull on 2026-08-13, a day after
+the run the result was first published from, on a rebuilt environment with newer pandas,
+numpy, and scipy. Every number below, and every number in the headline, came back
+identical; the top-50 ranking is the same 50 units in the same order, with Empirical
+Bayes estimates differing by at most 4e-13. Two independent pulls agreeing to the row is
+weak evidence about the *method* and strong evidence about the *pipeline*: nothing in it
+depends on the machine it ran on. It is not the independent re-derivation still listed in
+[TODOS.md](TODOS.md) — that needs code that shares nothing with `src/backtest.py`.
 
 | | |
 |---|---:|
@@ -306,9 +374,18 @@ uv pip install -e ".[dev]"
 # credentials — needed only for the data pull, not for the tests
 cp .env.example .env      # then paste your own Socrata app token into it
 
-.venv/bin/python -m pytest                      # 203 tests, no network or token needed
+.venv/bin/python -m pytest                      # 241 tests, no network or token needed
 .venv/bin/python scripts/pull_snapshots.py      # data/raw/<date>/*.parquet + manifest.json
+.venv/bin/python -m src.pipeline                # the headline, from the snapshot
+.venv/bin/python scripts/radius_sensitivity.py  # does the headline survive other radii?
 ```
+
+On Windows the interpreter is at `.venv/Scripts/python.exe`; everything else is the same.
+
+The same two environment commands run in CI on every push and pull request
+([`.github/workflows/test.yml`](.github/workflows/test.yml)), on Python 3.11 and 3.12.
+If the reproduction path above stops working, CI is what finds out rather than the next
+reader.
 
 Get a Socrata app token from
 [NYC Open Data developer settings](https://data.cityofnewyork.us/profile/edit/developer_settings).
@@ -344,6 +421,11 @@ a story.
 - **No general claim that Empirical Bayes beats counting by 18 points.** The lift is
   2.1pp where both methods have crash history to work with. See
   [the N-sweep](#the-number-that-keeps-that-honest).
+- **No claim that +18.4 is radius-free.** Across the nine settings swept, the lift runs
+  from +16.1pp to +19.9pp, and about 2pp per 50 ft of that depends on where the boundary
+  between "at an intersection" and "mid-block" is drawn. Every setting clears the bar, so
+  the finding holds; the decimal is a measurement at one defensible choice, not a
+  constant. See [the sensitivity sweep](#does-the-headline-survive-its-own-judgement-calls).
 - **No calibration claim.** The SPF is fit on 36-month trailing counts and scored against
   a 24-month holdout, so predicted counts sit on a longer window than observed ones. The
   model over-predicts by roughly the window ratio: observed/predicted is 0.56 on surface
@@ -420,10 +502,11 @@ whether it is worth wrapping in a tool.
 | | |
 |---|---|
 | ✅ Scope and method settled | Office-hours design review, eng review (7 findings, all folded in) |
-| ✅ Pipeline built and tested | Snapshot pull, universe, features, SPF, EB, backtest. 203 tests green |
-| ✅ Run against real data | Snapshot 2026-08-12, result above, one earlier run discarded |
-| ⏭ Next | Sensitivity of the result to the join radius; independent re-derivation |
-| ⏸ Gated | Streamlit page, budget slider, SHAP explainer, CI (Approach B) |
+| ✅ Pipeline built and tested | Snapshot pull, universe, features, SPF, EB, backtest. 241 tests green, run in CI on 3.11 and 3.12 |
+| ✅ Run against real data | Snapshot 2026-08-13, result above, one earlier run discarded |
+| ✅ Sensitivity to the join radii | All three swept; see below. The headline does not turn on them |
+| ⏭ Next | Independent re-derivation; SPF window aligned to the holdout |
+| ⏸ Gated | Streamlit page, budget slider, SHAP explainer (Approach B) |
 | ⏸ Gated | The named-streets counterfactual (Approach C) |
 | 📋 Deferred, written up | Traffic-volume exposure ([TODOS.md](TODOS.md)) |
 

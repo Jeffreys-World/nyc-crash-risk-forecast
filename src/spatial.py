@@ -29,12 +29,15 @@ from shapely.geometry import Point
 from src.config import (
     CRS_GEOGRAPHIC,
     CRS_PROJECTED,
-    INTERSECTION_RADIUS_FT,
+    DEFAULT_RADII,
     MAX_JOIN_DISTANCE_FT,
     MIN_SEGMENT_LENGTH_FT,
     NYC_BOUNDS_FT,
     ROAD_NUMERIC_COLUMNS,
     ROADWAY_TYPE_STREET,
+    SIP_BUFFER_FT,
+    VZV_BUFFER_FT,
+    JoinRadii,
 )
 
 log = logging.getLogger(__name__)
@@ -101,6 +104,11 @@ class AssignmentReport:
     beyond_max_distance: int = 0
     assigned_intersection: int = 0
     assigned_corridor: int = 0
+    # Carried on the report rather than read from config when the summary is written.
+    # A sensitivity run varies this, and a report that says "beyond 150ft" for a run
+    # that used 250 is a provenance field describing a different run than the one that
+    # produced it.
+    max_join_distance_ft: float = MAX_JOIN_DISTANCE_FT
 
     @property
     def assigned(self) -> int:
@@ -131,7 +139,7 @@ class AssignmentReport:
             f"[{self.assigned_intersection} intersection, {self.assigned_corridor} corridor], "
             f"{self.dropped} dropped "
             f"[missing coords {self.missing_coords}, (0,0) {self.null_island}, "
-            f"outside NYC {self.outside_nyc}, beyond {MAX_JOIN_DISTANCE_FT:.0f}ft "
+            f"outside NYC {self.outside_nyc}, beyond {self.max_join_distance_ft:.0f}ft "
             f"{self.beyond_max_distance}]"
         )
 
@@ -462,6 +470,7 @@ def assign_crashes_to_units(
     crashes: gpd.GeoDataFrame,
     universe: gpd.GeoDataFrame,
     report: AssignmentReport,
+    radii: JoinRadii | None = None,
 ) -> tuple[pd.DataFrame, AssignmentReport]:
     """Attach each crash to one unit: intersection first, then corridor.
 
@@ -469,13 +478,19 @@ def assign_crashes_to_units(
     crash in the middle of an intersection is physically nearest to the node, but a
     crash 60 ft up the block is nearest to the segment while still being
     intersection-related in every conventional classification. Stage one claims
-    everything within `INTERSECTION_RADIUS_FT` of a node; stage two takes the rest.
+    everything within the intersection radius of a node; stage two takes the rest.
 
     Uses `sjoin_nearest`, which is R-tree indexed. The naive `.apply()` over rows is
     O(n*m) across roughly 800k crashes and 120k segments and does not finish.
+
+    `radii` defaults to the pinned values in `src.config`. It is a parameter so the
+    sensitivity sweep can vary the two distances without editing the module, and so the
+    values it used travel with the run rather than being inferred from config later.
     """
+    radii = radii or DEFAULT_RADII
     assert_projected(crashes, "crashes")
     assert_projected(universe, "universe")
+    report.max_join_distance_ft = radii.max_join_distance_ft
 
     # The two-stage handoff identifies crashes by index label, so a non-unique index
     # silently collapses distinct crashes into one. Concatenating two snapshot parquet
@@ -494,13 +509,13 @@ def assign_crashes_to_units(
     remaining = crashes
 
     if not nodes.empty:
-        at_nodes = _nearest_within(remaining, nodes, INTERSECTION_RADIUS_FT)
+        at_nodes = _nearest_within(remaining, nodes, radii.intersection_radius_ft)
         report.assigned_intersection = len(at_nodes)
         parts.append(at_nodes)
         remaining = remaining.loc[~remaining.index.isin(at_nodes["_left_idx"])]
 
     if not segments.empty and not remaining.empty:
-        at_segments = _nearest_within(remaining, segments, MAX_JOIN_DISTANCE_FT)
+        at_segments = _nearest_within(remaining, segments, radii.max_join_distance_ft)
         report.assigned_corridor = len(at_segments)
         parts.append(at_segments)
         remaining = remaining.loc[~remaining.index.isin(at_segments["_left_idx"])]
@@ -526,7 +541,7 @@ def join_vzv_labels(
     vzv_corridors: gpd.GeoDataFrame,
     vzv_intersections: gpd.GeoDataFrame,
     report: LabelJoinReport | None = None,
-    buffer_ft: float = 50.0,
+    buffer_ft: float = VZV_BUFFER_FT,
 ) -> tuple[gpd.GeoDataFrame, LabelJoinReport]:
     """Flag which units are on DOT's published priority list.
 
@@ -622,7 +637,7 @@ def join_sip_treatment(
         "date_complete",
     ),
     report: LabelJoinReport | None = None,
-    buffer_ft: float = 50.0,
+    buffer_ft: float = SIP_BUFFER_FT,
 ) -> tuple[gpd.GeoDataFrame, LabelJoinReport]:
     """Tag which units received a Street Improvement Project, and when.
 

@@ -36,11 +36,13 @@ from src.config import (
     BOROUGH_CODES,
     CACHE_DIR,
     CRS_GEOGRAPHIC,
+    DEFAULT_RADII,
     HOLDOUT_YEARS,
     PROCESSED_DIR,
     RAW_DIR,
     SPF_PREDICTORS,
     TRAIN_YEARS,
+    JoinRadii,
 )
 from src.features import add_pedestrian_casualties, build_features
 from src.spatial import (
@@ -98,6 +100,10 @@ class RunSummary:
     untreated_pp: float | None
     treated_before_holdout_units: int
     treated_during_holdout_units: int
+    # The three join distances this run actually used. Provenance, not configuration:
+    # a summary that does not say which radii produced it cannot be compared against
+    # another summary, which is precisely what a sensitivity sweep needs to do.
+    join_radii: dict[str, float]
 
 
 # --------------------------------------------------------------------------------------
@@ -161,8 +167,13 @@ def prepare_centerline(snapshot: Path) -> gpd.GeoDataFrame:
 # --------------------------------------------------------------------------------------
 
 
-def build_scored_units(snapshot: Path, use_cache: bool = True) -> tuple[pd.DataFrame, dict]:
+def build_scored_units(
+    snapshot: Path,
+    use_cache: bool = True,
+    radii: JoinRadii | None = None,
+) -> tuple[pd.DataFrame, dict]:
     """Universe + assigned crashes + labels + treatment, cached to parquet."""
+    radii = radii or DEFAULT_RADII
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
     # The cache key includes a fingerprint of the code that produces the cached frame,
@@ -174,18 +185,25 @@ def build_scored_units(snapshot: Path, use_cache: bool = True) -> tuple[pd.DataF
     #
     # For a repo whose claim is "clone this and reproduce the number", a cache that can
     # serve a stale intermediate is a correctness bug, not a performance detail.
+    #
+    # The radii tag is in the key for the same reason and closes the same hole from the
+    # other side: they are now arguments, so two runs can differ in what they built
+    # while every file the fingerprint hashes is byte-identical. Without the tag a
+    # sensitivity sweep would rebuild once and then serve that first result for every
+    # subsequent setting, reporting a flat, entirely fictional insensitivity.
     fingerprint = _code_fingerprint()
-    cache = CACHE_DIR / f"units-{snapshot.name}-{fingerprint}.parquet"
-    stats_path = CACHE_DIR / f"units-{snapshot.name}-{fingerprint}.json"
+    stem = f"units-{snapshot.name}-{radii.tag}-{fingerprint}"
+    cache = CACHE_DIR / f"{stem}.parquet"
+    stats_path = CACHE_DIR / f"{stem}.json"
 
     if use_cache and cache.exists() and stats_path.exists():
         log.info("using cached units: %s", cache)
         return pd.read_parquet(cache), json.loads(stats_path.read_text())
 
-    stale = sorted(CACHE_DIR.glob(f"units-{snapshot.name}-*.parquet"))
+    stale = sorted(CACHE_DIR.glob(f"units-{snapshot.name}-{radii.tag}-*.parquet"))
     if stale:
         log.info(
-            "code changed since %d cached build(s) for this snapshot; rebuilding",
+            "code changed since %d cached build(s) at these radii; rebuilding",
             len(stale),
         )
 
@@ -194,9 +212,12 @@ def build_scored_units(snapshot: Path, use_cache: bool = True) -> tuple[pd.DataF
     universe = build_universe(prepare_centerline(snapshot))
     log.info("universe: %d units in %.1fs", len(universe), time.time() - t0)
 
-    log.info("labelling VZV priority units")
+    log.info("labelling VZV priority units at a %.0f ft buffer", radii.vzv_buffer_ft)
     universe, label_report = join_vzv_labels(
-        universe, load_geo(snapshot, "vzv_corridors"), load_geo(snapshot, "vzv_intersections")
+        universe,
+        load_geo(snapshot, "vzv_corridors"),
+        load_geo(snapshot, "vzv_intersections"),
+        buffer_ft=radii.vzv_buffer_ft,
     )
 
     log.info("joining SIP treatment")
@@ -210,9 +231,15 @@ def build_scored_units(snapshot: Path, use_cache: bool = True) -> tuple[pd.DataF
     crashes = add_pedestrian_casualties(pd.read_parquet(snapshot / "crashes.parquet"))
     points, report = crashes_to_gdf(crashes)
 
-    log.info("assigning %d crashes to %d units", len(points), len(universe))
+    log.info(
+        "assigning %d crashes to %d units (intersection %.0f ft, corridor %.0f ft)",
+        len(points),
+        len(universe),
+        radii.intersection_radius_ft,
+        radii.max_join_distance_ft,
+    )
     t0 = time.time()
-    assigned, report = assign_crashes_to_units(points, universe, report)
+    assigned, report = assign_crashes_to_units(points, universe, report, radii=radii)
     log.info("assignment done in %.1fs", time.time() - t0)
 
     assigned["crash_date"] = pd.to_datetime(assigned["crash_date"])
@@ -245,6 +272,7 @@ def build_scored_units(snapshot: Path, use_cache: bool = True) -> tuple[pd.DataF
         "label_summary": label_report.summary(),
         "train_crashes": int(len(train)),
         "holdout_crashes": int(len(holdout)),
+        "join_radii": radii.as_dict(),
     }
 
     units.to_parquet(cache, index=False)
@@ -252,11 +280,23 @@ def build_scored_units(snapshot: Path, use_cache: bool = True) -> tuple[pd.DataF
     return units, stats
 
 
-def run(snapshot: Path | None = None, use_cache: bool = True) -> RunSummary:
-    snapshot = snapshot or latest_snapshot()
-    log.info("snapshot: %s", snapshot)
+def run(
+    snapshot: Path | None = None,
+    use_cache: bool = True,
+    radii: JoinRadii | None = None,
+    write_artifacts: bool = True,
+) -> RunSummary:
+    """The full run. Returns the summary; optionally writes the committed artifacts.
 
-    units, stats = build_scored_units(snapshot, use_cache=use_cache)
+    `write_artifacts=False` is what the sensitivity sweep uses. `data/processed/` holds
+    the published headline, and a sweep at 250 ft silently overwriting it with a result
+    the README does not describe would be worse than not running the sweep at all.
+    """
+    radii = radii or DEFAULT_RADII
+    snapshot = snapshot or latest_snapshot()
+    log.info("snapshot: %s, radii: %s", snapshot, radii.tag)
+
+    units, stats = build_scored_units(snapshot, use_cache=use_cache, radii=radii)
 
     log.info("fitting SPF and blending")
     scored, spf_results = fit_and_blend(
@@ -341,7 +381,12 @@ def run(snapshot: Path | None = None, use_cache: bool = True) -> RunSummary:
         treated_during_holdout_units=int(
             (treatment_when.notna() & (treatment_when >= HOLDOUT_START)).sum()
         ),
+        join_radii=radii.as_dict(),
     )
+
+    if not write_artifacts:
+        log.info("write_artifacts=False: leaving %s untouched", PROCESSED_DIR)
+        return summary
 
     PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
     out = PROCESSED_DIR / "run-summary.json"
@@ -379,7 +424,38 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--no-cache", action="store_true", help="rebuild cached stages")
     parser.add_argument("--snapshot", help="snapshot directory name, e.g. 2026-08-12")
+    # Exposed so a single non-default setting can be reproduced from a shell without
+    # importing anything. `scripts/radius_sensitivity.py` sweeps all three at once.
+    parser.add_argument(
+        "--max-join-distance-ft",
+        type=float,
+        default=DEFAULT_RADII.max_join_distance_ft,
+        help="crash-to-segment join radius (default %(default)s)",
+    )
+    parser.add_argument(
+        "--intersection-radius-ft",
+        type=float,
+        default=DEFAULT_RADII.intersection_radius_ft,
+        help="crash-to-node claim radius (default %(default)s)",
+    )
+    parser.add_argument(
+        "--vzv-buffer-ft",
+        type=float,
+        default=DEFAULT_RADII.vzv_buffer_ft,
+        help="VZV priority-label buffer (default %(default)s)",
+    )
+    parser.add_argument(
+        "--no-write",
+        action="store_true",
+        help="do not write data/processed/; print the headline only",
+    )
     args = parser.parse_args(argv)
+
+    radii = JoinRadii(
+        max_join_distance_ft=args.max_join_distance_ft,
+        intersection_radius_ft=args.intersection_radius_ft,
+        vzv_buffer_ft=args.vzv_buffer_ft,
+    )
 
     logging.basicConfig(
         level=logging.INFO,
@@ -388,7 +464,18 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     snapshot = (RAW_DIR / args.snapshot) if args.snapshot else None
-    summary = run(snapshot=snapshot, use_cache=not args.no_cache)
+    # Non-default radii never touch data/processed/ even without --no-write. The
+    # committed artifacts are the published headline; overwriting them from an
+    # exploratory run is how a repo starts disagreeing with its own README.
+    write = not args.no_write and radii == DEFAULT_RADII
+    if not write and not args.no_write:
+        log.info("non-default radii %s: not writing data/processed/", radii.tag)
+    summary = run(
+        snapshot=snapshot,
+        use_cache=not args.no_cache,
+        radii=radii,
+        write_artifacts=write,
+    )
 
     print("\n" + "=" * 72)
     print("HEADLINE")
