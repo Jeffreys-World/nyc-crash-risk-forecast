@@ -167,7 +167,43 @@ would have prevented casualties it may in fact have prevented by rebuilding the 
 
 ---
 
+## P2 — Design debt from `/plan-design-review`, 2026-08-13
+
+- **No screenshot of the application may ship until the zero-history emitter exists.**
+  The prototype at `~/.gstack/projects/Jeffreys-World-nyc-crash-risk-forecast/designs/comparison-view-20260813/prototype.html`
+  generates its 500 ranked rows in the browser from a hardcoded street list. The scores are
+  invented. They exist so column density and line length can be judged, and the file carries
+  a non-dismissible banner saying so — but a cropped screenshot loses that banner, and a
+  walkthrough GIF in the README (already a P3 item above) would put fabricated results on a
+  portfolio page. This is the exact failure the repo's content-integrity rule exists to stop.
+  *Blocked by:* the re-pull and the T3 emitter. *Do:* add a CI check that no image lands under
+  `docs/` or in the README before the emitter ships, and delete the synthetic rows the day
+  real output exists.
+
+- **Contrast-audit the forked dark palette before trusting it.** The design review chose to
+  ship light and dark. The dark severity values (`#e0913a`, `#c9a83c`, `#6fa980`) and
+  `--muted #8C8477` were authored by eye for the portfolio's marketing page, where they
+  decorate. Here they would carry meaning in a data table, at 11px, on a projector. The light
+  ramp turned out to have a real failure — `DESIGN.md`'s `--sev-high #B4600A` measures
+  **4.26:1** against `#FAF7F2` and fails AA, while the shipped `style.css` value `#a45709`
+  measures 4.98:1 and passes. Assuming the dark set is clean is the same mistake a second
+  time. *Do:* measure all four ramp levels plus `--muted` against `#14120F` at both normal and
+  presentation type sizes; correct the fork; and **file the `#B4600A` bug against the
+  portfolio repo**, where it is live today.
+
+---
+
 ## P3 — Polish and small cleanups
+
+- **`/unit/{id}` permalink has no design and is deferred past the presentation.** Decision 11
+  pushed it behind the demo spine, but it is the only route where live-feed staleness is
+  inspectable, and a per-location URL is the thing an engineer defending a pick would actually
+  send someone. Three questions are open and none are answered anywhere: how a visitor gets
+  back to the worksheet from a cold permalink load, where keyboard focus enters, and what
+  "this incident data is N hours old" looks like. Recorded here so the deferral is a decision
+  rather than a disappearance — which is how the mobile and accessibility specs vanished
+  between revision 1 and revision 2. *Depends on:* the geometry export and the API tier
+  (eng-review decision 12).
 
 - **Non-technical one-page executive summary**, alongside the technical model card.
   Section 10.4 of the original plan; still unwritten.

@@ -1,132 +1,177 @@
-# Project Plan: NYC Crash Hotspot Risk Predictor
+# Project Plan: NYC Crash Priority-Location Application
 
 **Builds on:** [Motor-Vehicle-Collisions---Crashes-Dashboard](https://github.com/Jeffreys-World/Motor-Vehicle-Collisions---Crashes-Dashboard)
 **Author:** Jeff
-**Status:** Draft for discussion — nothing below is final
+**Context:** Fellowship project; will be published to a personal website as a portfolio piece.
+**Status:** Working plan — confirm changes before implementation.
+
+**Revision history:**
+- v1 — predictive hotspot tool
+- v2 — reframed after external review to lead with a defensible finding (SPF + Empirical Bayes, exposure variable, audit framing)
+- v3 (current) — restructured around the actual deliverable: a polished application, with the audit as its credibility layer rather than a separate output
 
 ---
 
-## 1. The problem statement
+## 1. What this is
 
-A NYC DOT engineer, at the start of quarterly budget planning, wants to know which intersections or corridors are most likely to produce a severe or fatal crash in the next 12 months, so they can prioritize a fixed list of street-redesign projects instead of reacting after the next death.
+An application a NYC DOT safety engineer uses to see where severe and fatal crashes concentrate across the city, and to produce a prioritized list of locations for a safety plan.
 
-Today, Vision Zero-style prioritization is largely reactive: a location gets attention after a fatality, a public petition, or a news story. A ranked, forward-looking risk score turns a fixed and limited safety budget into a measurably better-targeted one.
+The distinguishing feature is *why the rankings can be trusted*: the locations are ranked using the road-safety field's standard method (Safety Performance Function + Empirical Bayes adjustment) rather than by raw crash counts — which corrects a known bias that raw-count rankings suffer from. The application shows that correction rather than hiding it.
+
+**Two things this project is, in order of weight:**
+
+1. **An application** (primary artifact) — explorable, polished, publishable to a website.
+2. **A methodological argument** (credibility layer) — the ranking inside it is defensibly better than the obvious one, and the app demonstrates that in-line.
+
+The scenario driving it is a designed one, documented in `docs/persona-validation.md` — grounded in published FHWA and NYC Vision Zero sources, with unverified assumptions stated plainly rather than assumed away.
 
 ## 2. Why this extends the existing dashboard well
 
-The current app already established the hard part — a defensible, documented, quality-audited dataset (812,318 rows for the 2019–2025 slice; 2,269,187 for the full 2012–2026 pull) with known issues handled: missing boroughs (30.5% of rows, 39.8% of deaths — deadlier on average), padded/unpadded street name duplicates, null coordinate scrubbing, and ragged API pagination.
+The current dashboard established the hard part: a defensible, quality-audited dataset (812,318 rows for the 2019–2025 slice; 2,269,187 for the full 2012–2026 pull), with known issues handled — missing boroughs (30.5% of rows, 39.8% of deaths, 1.5x deadlier), padded/unpadded street-name duplicates, coordinate scrubbing, ragged API pagination.
 
-This project reuses that cleaned data and three existing visualizations directly:
+Direct reuse:
 
-- **Section 8 (hotspot density map)** → the spatial unit of analysis (~100m cells)
-- **Section 9 (severity outliers)** → the fatal/severe crash label to predict
-- **Section 5 (contributing factors)** → candidate model features
+- **Section 8 (hotspot density map)** → the application's primary map view
+- **Section 9 (severity outliers)** → the KSI (killed or severely injured) outcome being ranked
+- **Section 5 (contributing factors)** → model features and per-location explanation content
 
-It also converts the project's core theme — "the obvious chart hides the real risk" — from a descriptive finding into a predictive one, which is the difference between a data-analyst portfolio piece and a data-scientist one.
+The throughline also carries: the dashboard found that the standard borough chart hides 40% of deaths. This application applies the same discipline one level up — the standard *ranking* method has a known bias too, and this one corrects it.
 
-## 3. Business value (for the hiring-manager narrative)
+## 3. Value narrative (for the fellowship and the hiring manager)
 
-- **Decision, not description.** The existing charts show what happened. This tool tells a budget-holder what to do next, ranked and quantified — the kind of output that maps directly to a real DOT resource-allocation workflow.
-- **Backtestable claim.** Because the label (fatal/severe crash) is historical, we can retroactively ask: "If this model had ranked locations in 2022, how many of 2023's severe crashes would have occurred at its top-N flagged locations?" That's a concrete, defensible ROI number to put in front of a hiring manager — far stronger than "the model has 0.81 AUC."
-- **Data-quality lineage carries through.** Because the missing-borough / geocoding-bias finding is already proven, the risk model can honestly state its blind spots (e.g., limited-access highways may be under-represented in training data) rather than presenting false confidence — a maturity signal for a DS role.
+- **It serves a decision, not a curiosity.** The output is a prioritized list an engineer could take into a planning cycle — not a gallery of charts.
+- **It uses the field's real method.** SPF + Empirical Bayes is the Highway Safety Manual standard, not a generic ML pipeline pointed at a public dataset. That signals domain grounding immediately to anyone who knows the space, and is explainable to anyone who doesn't.
+- **It shows its own correction.** Raw-count ranking and EB-adjusted ranking sit side by side in the interface, so the methodological point is visible in 10 seconds rather than buried in a write-up.
+- **It states its limits.** Exposure-data gaps, low-sample locations, the hotspot/systemic scope boundary, and unverified persona assumptions are all documented rather than papered over.
 
-## 4. Data & feature plan
+## 4. Scope: systemic ranking with a hotspot correction (state this explicitly)
 
-**Unit of analysis:** ~100m spatial grid cell (reuse existing hotspot binning), by month.
+FHWA distinguishes two prioritization approaches:
 
-**Candidate features per cell-month:**
-- Trailing crash count and severity mix (e.g., last 12/24 months)
-- Contributing factor mix (share of "Unspecified," "Driver Inattention," etc.)
-- Day-of-week / hour-of-day crash concentration (from the existing heatmap)
-- Road type proxy (limited-access highway vs. surface street, using the street-name list already identified in the borough-gap analysis)
-- Borough / precinct (where available)
+- **Hotspot / site-specific** — rank locations by their own crash history.
+- **Systemic** — target high-risk *roadway features* network-wide, reaching locations with no crash record.
 
-**Target:** binary or count outcome — probability (or expected count) of a severe/fatal crash in the next 12 months for that cell.
+**This project does both, and the split is structural rather than rhetorical.**
 
-**Known data caveats to disclose up front (already documented in the repo):**
-- Borough-missing rows skew toward highways and are 1.5–1.67x deadlier — so any model must include highway segments explicitly, not drop them the way the "obvious" bar chart does.
-- "Unspecified" is the top contributing factor — treat as a real, informative sparse category, not noise to drop.
+The **SPF is the systemic component**. Its predictors are `posted_speed`, `number_travel_lanes`, `streetwidth`, `is_highway`, and an imputation flag, plus a log-exposure offset (`src/config.py:181`). No crash-derived terms — they were removed deliberately, because feeding crash history into the SPF double-counts the history Empirical Bayes exists to weigh. Roadway characteristics applied network-wide regardless of crash record is FHWA's systemic approach by definition.
 
-## 5. Modeling approach
+The **EB blend is the hotspot correction**, applied on top for the 13,712 units (6.2%) that have history worth correcting.
 
-1. **Baseline (interpretable):** Poisson or negative binomial regression on crash counts per cell-month — appropriate because crash counts are classic overdispersed count data. This is the model to lead with when explaining results to a non-technical stakeholder.
-2. **Comparison model:** Gradient-boosted trees (XGBoost or LightGBM) on the same features, to test whether nonlinear interactions meaningfully improve ranking quality.
-3. **Validation:** Time-based split only — train on earlier years, test on the most recent held-out period. A random split would leak future information into training and invalidate the forecast claim; this is worth calling out explicitly in the writeup as a modeling-rigor signal.
-4. **Metric:** Precision/recall at top-N (since the deliverable is a ranked shortlist, not a calibrated probability), plus the backtest ROI number described in Section 3.
+This is the hybrid the Highway Safety Manual prescribes, and the distinction carries the result. The headline +18.4pp at N=38,909 comes from ordering the 206,321 zero-history units, which only the systemic half can do. Restricted to units with history, lift is +2.1pp and does not clear the pre-registered 5pp bar — published in the README rather than omitted.
 
-## 6. Deliverable shape
+**On fundability:** because the zero-history reach is systemic, FHWA's documented acceptance of systemic analysis as HSIP justification is the applicable standard. See `persona-validation.md`. What remains unverified is whether NYC DOT specifically uses that pathway and what evidence it demands.
 
-- A ranked table/map of the top-N highest-predicted-risk locations, each with its predicted risk score and the top contributing features (via feature importance or SHAP).
-- A simple "budget scenario" control: "You can fund 20 projects this year" → returns the top 20 locations ranked by predicted risk, so the tool answers a real constrained-resource question rather than just producing a leaderboard.
-- A short model card / caveats section (reusing the "What is NOT claimed yet" tone already established in the repo's README) stating what the model does not know — e.g., unrecovered-borough locations, reporting gaps, small-sample cells.
+Naming this accurately is the credibility signal. Claiming hotspot-only would have been the more cautious-sounding framing and would have disclaimed the project's own finding.
 
-## 7. Suggested milestones
+## 5. The application
 
-| Stage | Notes |
+### 5.1 Core views
+
+| View | Purpose |
 |---|---|
-| Define grid cell + monthly aggregation pipeline | Extends `scripts/clean_crash_data.py` |
-| Feature engineering table (cell-month level) | New script, e.g. `scripts/build_risk_features.py` |
-| Baseline Poisson/NB model + time-based validation | Establish honest baseline first |
-| Gradient-boosted comparison model | Only after baseline is documented |
-| Backtest ROI simulation | The single strongest hiring-manager slide |
-| Streamlit page: ranked list + budget-scenario control | New page/tab in existing app |
-| Model card / caveats writeup | Match README's existing rigor and tone |
+| **Citywide hotspot map** | Where severe crashes concentrate; the entry point |
+| **Ranked location list** | Intersections/corridors ordered by EB-adjusted risk |
+| **Raw vs. adjusted toggle** | The methodological argument, made visible and interactive |
+| **Location detail panel** | Why this location ranks where it does — crash mix, timing, contributing factors, exposure |
+| **Budget scenario control** | "I can fund N projects" → the top N, with what they collectively represent |
 
-## 8. Decisions
+### 5.2 Interaction principle
 
-- **Spatial unit:** Aggregate to named intersections/corridors rather than raw ~100m grid cells. Less granular to model, but far more interpretable and directly actionable for DOT — a ranked list of streets/intersections is something a budget-holder can act on without translation.
-- **Borough recovery sequencing:** No hard dependency — implement the point-in-polygon borough recovery before or after the first model pass, whichever is more convenient given how the build unfolds. Worth revisiting once we're closer to feature engineering, since intersection-level aggregation may reduce how much the borough field matters directly (street/corridor identity may already substitute for it).
-- **Forecast window:** 12 months. Matches the DOT budget-planning cadence the persona is built around (quarterly planning, annual project slate).
+The engineer explores; the app supplies a trustworthy ordering and explains itself on demand. Nothing in the interface should require reading a methodology document first — the raw/adjusted toggle should teach the concept by being used.
 
-## 9. Updated feature/unit note
+### 5.3 Polish targets (these matter — this is a portfolio artifact)
 
-Since the spatial unit is now named intersections/corridors rather than grid cells, Section 4's feature list carries over unchanged, but aggregation should key on street/intersection name (with the padded/unpadded name-cleaning already handled in `scripts/clean_crash_data.py`) rather than lat/long bins. The hotspot map (Section 8 of the dashboard) can still inform which corridors matter most visually, even though the model's unit of analysis is now named locations.
+- Fast initial load; no multi-second blank states
+- Coherent visual language with the existing dashboard
+- Legible on a laptop screen without zooming; degrades acceptably on tablet
+- Every number labeled with its date range and source
+- A short walkthrough GIF in the README for reviewers who won't run it
 
-## 10. Enhancements to increase impact
+## 6. Method
 
-All of the following are in scope. They're grouped so build order is clear — rigor and product polish sit on top of the core model from Sections 4–6; storytelling wraps the whole project once the rest exists.
+### 6.1 Safety Performance Function
 
-### 10.1 Rigor signals (data science credibility)
+Poisson or negative binomial regression predicting expected KSI count per location from location characteristics and exposure. Negative binomial is the expected choice given overdispersion typical of crash counts.
 
-- **Model card**, matching the "What is NOT claimed yet" honesty already established in the repo README: calibration plot, confidence interval on the backtest ROI number, and an explicit list of blind spots (low-sample corridors, recency bias, any location type still under-covered).
-- **Naive-baseline comparison**: rank locations by raw trailing crash count (no model) and show this side by side with the model's backtest performance. If the model doesn't clearly beat the naive baseline, that needs to be known and disclosed before anyone else finds it; if it does, it becomes the headline result.
-- **Error analysis**: characterize where the model is wrong and why — specifically checking whether it systematically underpredicts on limited-access highway corridors, which would directly echo the original borough-gap finding and tie the whole project into one coherent investigation rather than two separate pieces of work.
+### 6.2 Empirical Bayes adjustment
 
-### 10.2 Product polish (make it feel real, not academic)
+Ranking sites by observed crash count suffers **regression-to-the-mean**: some locations look dangerous from noise alone, and naive ranking systematically overstates their future risk. EB shrinks the observed count toward the SPF-predicted mean, weighted by reliability, producing a de-noised long-run risk estimate.
 
-- **Interactive budget slider** in the Streamlit app: drag project count N (e.g., 5–50) and watch the ranked list and map update live.
-- **Per-location "why this ranking" explainer** (SHAP-based, plain language) — e.g., "ranked #3 mainly due to high injury rate at this intersection during evening rush hour."
-- **Before/after counterfactual framing**: what today's reactive approach would have funded historically vs. what the model would have funded, and the resulting fatality-prevention gap between the two, shown visually.
+This is the standard correction in road-safety practice, and it is the single most important technical decision in the project. The application surfaces it directly via the raw/adjusted toggle.
 
-### 10.3 Engineering maturity
+### 6.3 Exposure (required)
 
-- **Tests** for the new feature-engineering and scoring pipeline, extending the existing `tests/` pattern already in the repo.
-- **Documented validation reasoning**: a short written explanation of the time-based split choice and why a random split would have leaked future information — reviewers with ML backgrounds specifically look for this.
-- **CI via GitHub Actions** running tests on push (if not already configured), so the repo reads as more than notebooks.
+Without traffic volume or segment length, any ranking confounds "busy" with "dangerous." NYC Open Data publishes traffic volume counts; coverage and join reliability at intersection/corridor level must be verified early (Section 9). If coverage is insufficient, use a documented fallback (segment length, road classification) and state the limitation in the interface, not only in the docs.
 
-### 10.4 Storytelling / presentation
+### 6.4 Validation
 
-- **Non-technical one-page executive summary**, alongside the technical model card, aimed at a non-technical stakeholder reader.
-- **Short recorded walkthrough or GIF** in the README demonstrating the budget-slider interaction, since many reviewers won't run the app themselves.
-- **Explicit project throughline in the README**, tying the model back to the founding insight: this project started by finding that the standard borough bar chart hides 40% of deaths; the model, its caveats, and the blind-spot analysis all follow that same discipline of checking what the obvious view leaves out.
+Time-based split only — fit on earlier years, evaluate against a later held-out period. A random split would leak future information and invalidate the forward-looking claim.
 
-## 11. Updated milestone table
+### 6.5 Evaluation
 
-| Stage | Notes |
-|---|---|
-| Define intersection/corridor aggregation pipeline | Extends `scripts/clean_crash_data.py`; reuses existing street-name cleaning |
-| Feature engineering table (intersection-month level) | New script, e.g. `scripts/build_risk_features.py` |
-| Baseline Poisson/NB model + time-based validation | Establish honest baseline first; document split reasoning (10.3) |
-| Naive-baseline comparison | Raw historical count ranking vs. model (10.1) |
-| Gradient-boosted comparison model | Only after baseline is documented |
-| Backtest ROI simulation | Strongest hiring-manager result |
-| Error analysis | Check for highway/corridor blind spots (10.1) |
-| Model card + non-technical executive summary | (10.1, 10.4) |
-| Streamlit page: ranked list, budget-scenario slider, SHAP explainer | (10.2) |
-| Tests + CI for new pipeline | (10.3) |
-| README throughline rewrite + walkthrough GIF | (10.4) |
-| Borough recovery (point-in-polygon join) | Sequence flexibly, per Section 8 |
+Does the EB-adjusted ranking's top-N concentrate more of the *subsequent* severe/fatal crashes than raw-count ranking over the same period? Report this honestly, including if the margin is small or mixed.
+
+## 7. Data & features
+
+**Unit:** named intersections and corridors (chosen over grid cells for interpretability — a ranked list of streets is directly actionable).
+
+**Features per location-period:**
+
+- Trailing crash count and severity mix (12/24 month windows)
+- Contributing factor mix, including "Unspecified" treated as informative, not noise
+- Temporal concentration (day-of-week, hour-of-day)
+- Road type — limited-access highway vs. surface street, using the street list from the borough-gap analysis
+- Borough/precinct where available
+- **Exposure** — volume or segment length (Section 6.3)
+
+**Outcome:** KSI count over the 12-month forward window (matches an annual planning cadence).
+
+**Carried-forward caveats:** highway-heavy rows are 1.5–1.67x deadlier and must not be dropped; street names require the existing whitespace normalization or the same corridor double-counts.
+
+## 8. Build sequence
+
+The principle: get one thin path working end-to-end before widening anything. But unlike a pure research deliverable, interface quality is part of what's being evaluated here — so polish is interleaved, not deferred to a final phase.
+
+**Phase 1 — Thin vertical slice**
+1. Aggregate cleaned data to intersections/corridors
+2. Verify exposure join feasibility; choose real variable or documented fallback
+3. Fit SPF; apply EB adjustment
+4. Backtest EB-adjusted vs. raw-count ranking on held-out period
+5. **Checkpoint:** does the adjustment change the ranking, and does the change hold up? Record the answer either way — a small or mixed effect is a real result and still supports the application.
+
+**Phase 2 — Application core**
+6. Map view + ranked list wired to real model output
+7. Raw vs. adjusted toggle
+8. Location detail panel
+
+**Phase 3 — Depth and polish**
+9. Budget scenario control
+10. Per-location explanation (plain language; SHAP or equivalent)
+11. Visual and performance pass
+12. Error analysis — does the model underpredict on highway corridors, echoing the borough-gap finding?
+
+**Phase 4 — Publication**
+13. Model card and limitations page (reachable from inside the app, not just the repo)
+14. Tests for the feature and scoring pipeline; CI on push
+15. README rewrite with the throughline; walkthrough GIF
+16. Website write-up: the finding, the method, the application, in that order
+
+## 9. Verify early (before Phase 1 step 3)
+
+- **Exposure data**: does NYC's traffic volume dataset actually join to these locations at usable coverage? This is the highest-risk dependency in the plan.
+- **Sample sufficiency**: how many intersections/corridors have enough KSI history for a stable EB estimate? This sets the floor for what the app can rank, and belongs in the model card as a stated reliability threshold.
+- **NYC published priority list**: if DOT's own priority-location list is publicly available with a documented methodology, comparing against it strengthens the argument considerably. If it isn't cleanly available, the raw-count comparison stands on its own — the project does not depend on this.
+
+## 10. Deliverables checklist
+
+- [ ] Deployed application (Streamlit Community Cloud or equivalent)
+- [ ] `docs/persona-validation.md` — designed scenario, documented sources, stated unknowns
+- [ ] Model card — method, validation, limitations, reliability threshold
+- [ ] Backtest result, reported honestly
+- [ ] Tests + CI
+- [ ] README with project throughline and walkthrough GIF
+- [ ] Website write-up for the portfolio audience
 
 ---
 
-*This document is a discussion draft. Confirm scope and any changes before implementation begins.*
+*Working draft. Confirm changes before implementation.*
