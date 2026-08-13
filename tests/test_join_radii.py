@@ -226,6 +226,119 @@ class TestTheReportDescribesTheRunThatProducedIt:
         assert "beyond 150ft" not in report.summary()
 
 
+class TestTheSweepPlanSurvivesRetuning:
+    """`src/config.py` invites retuning the intersection radius. The plan must follow it.
+
+    With the swept values written out literally, changing a published constant leaves no
+    row flagged baseline. The report builder then dies selecting it - after every rebuild
+    has run and after the CSV has already been written over.
+    """
+
+    def test_every_axis_contains_the_published_value(self):
+        from scripts.radius_sensitivity import SWEEPS, settings
+
+        published = DEFAULT_RADII.as_dict()
+        by_knob: dict[str, set[float]] = {}
+        for knob, field, value, _ in settings():
+            by_knob.setdefault((knob, field), set()).add(value)
+
+        assert len(by_knob) == len(SWEEPS)
+        for (knob, field), values in by_knob.items():
+            assert published[field] in values, f"{knob} has no baseline row"
+
+    def test_exactly_one_row_per_axis_is_the_baseline(self):
+        from scripts.radius_sensitivity import settings
+
+        for knob in {k for k, _, _, _ in settings()}:
+            flagged = [r for k, _, _, r in settings() if k == knob and r == DEFAULT_RADII]
+            assert len(flagged) == 1, knob
+
+    def test_a_retuned_config_still_yields_a_baseline_row(self, monkeypatch):
+        """The regression: 120 ft is in no hardcoded list, and must still appear."""
+        from scripts import radius_sensitivity
+
+        retuned = JoinRadii(
+            **{**DEFAULT_RADII.as_dict(), "intersection_radius_ft": 120.0}
+        )
+        monkeypatch.setattr(radius_sensitivity, "DEFAULT_RADII", retuned)
+
+        rows = radius_sensitivity.settings()
+        assert any(r == retuned for _, _, _, r in rows)
+        for knob in {k for k, _, _, _ in rows}:
+            assert any(r == retuned for k, _, _, r in rows if k == knob), knob
+
+    def test_quick_sweeps_one_axis(self):
+        from scripts.radius_sensitivity import QUICK_ONLY, settings
+
+        assert {k for k, _, _, _ in settings(quick=True)} == {QUICK_ONLY}
+
+
+class TestReportRefusesToMisrepresentItself:
+    def test_an_undefined_capture_rate_is_named_not_formatted(self):
+        """`rate_pp` is `float | None` by contract; None must not become a traceback."""
+        from scripts.radius_sensitivity import _pp
+
+        assert _pp(None) == "UNDEFINED"
+        assert _pp(float("nan")) == "UNDEFINED"
+        assert _pp(82.535) == "82.5%"
+
+    def test_a_frame_with_no_baseline_fails_loudly(self):
+        from scripts.radius_sensitivity import to_markdown
+
+        frame = pd.DataFrame(
+            [
+                {
+                    "knob": "intersection radius", "value_ft": 50.0, "is_baseline": False,
+                    "priority_units_n": 1, "holdout_casualties": 1, "r1_pp": 1.0,
+                    "r2_pp": 1.0, "r3_pp": 1.0, "lift_pp": 1.0, "ci_low_pp": 0.1,
+                    "ci_high_pp": 2.0, "clears_bar": True,
+                }
+            ]
+        )
+        with pytest.raises(SystemExit, match="no row matches the published radii"):
+            to_markdown(frame, "2026-08-13")
+
+    def test_a_partial_sweep_says_so_in_the_report(self):
+        """A one-axis table must not read as though all three were tested."""
+        from scripts.radius_sensitivity import to_markdown
+
+        frame = pd.DataFrame(
+            [
+                {
+                    "knob": "intersection radius", "value_ft": v, "is_baseline": base,
+                    "priority_units_n": 38909, "holdout_casualties": 18059, "r1_pp": 48.7,
+                    "r2_pp": 64.1, "r3_pp": 82.5, "lift_pp": 18.4, "ci_low_pp": 17.5,
+                    "ci_high_pp": 19.3, "clears_bar": True,
+                }
+                for v, base in ((50.0, False), (100.0, True), (150.0, False))
+            ]
+        )
+        assert "Partial sweep" in to_markdown(frame, "2026-08-13")
+
+    def test_the_baseline_line_follows_config(self, monkeypatch):
+        """`Baseline (150 / 100 / 50 ft)` must be derived, not typed."""
+        from scripts import radius_sensitivity
+
+        monkeypatch.setattr(
+            radius_sensitivity,
+            "DEFAULT_RADII",
+            JoinRadii(**{**DEFAULT_RADII.as_dict(), "intersection_radius_ft": 120.0}),
+        )
+        frame = pd.DataFrame(
+            [
+                {
+                    "knob": "intersection radius", "value_ft": 120.0, "is_baseline": True,
+                    "priority_units_n": 1, "holdout_casualties": 1, "r1_pp": 1.0,
+                    "r2_pp": 1.0, "r3_pp": 1.0, "lift_pp": 1.0, "ci_low_pp": 0.1,
+                    "ci_high_pp": 2.0, "clears_bar": True,
+                }
+            ]
+        )
+        assert "Baseline (150 / 120 / 50 ft)" in radius_sensitivity.to_markdown(
+            frame, "2026-08-13"
+        )
+
+
 class TestExploratoryRunsCannotOverwriteThePublishedResult:
     """`data/processed/` is the headline the README quotes.
 

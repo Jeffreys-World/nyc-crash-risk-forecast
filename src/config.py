@@ -7,7 +7,7 @@ pipeline stage, so "what did this run actually use" is answerable by reading one
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -269,11 +269,16 @@ class JoinRadii:
         )
 
     def as_dict(self) -> dict[str, float]:
-        return {
-            "max_join_distance_ft": self.max_join_distance_ft,
-            "intersection_radius_ft": self.intersection_radius_ft,
-            "vzv_buffer_ft": self.vzv_buffer_ft,
-        }
+        """All fields, derived rather than hand-listed.
+
+        This is the round trip in both directions - the sensitivity sweep builds each
+        setting with `JoinRadii(**{**DEFAULT_RADII.as_dict(), field: value})`, and
+        `RunSummary.join_radii` is what a run records about itself. Spelled out by hand,
+        a fourth radius added here would silently drop out of both: the sweep would hold
+        it at its default while claiming to vary everything, and the summary would omit
+        it from the provenance it exists to carry.
+        """
+        return asdict(self)
 
 
 DEFAULT_RADII = JoinRadii()

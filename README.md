@@ -227,9 +227,12 @@ at a time, holding the other two at their published values
 | VZV label buffer | 25 / **50** / 100 ft | +17.1 / **+18.4** / +19.6pp |
 | Intersection radius | 50 / **100** / 150 ft | +16.1 / **+18.4** / +19.9pp |
 
-**The lift spans +16.1pp to +19.9pp. Every one of the nine settings clears the
-pre-registered 5pp bar, and every confidence interval excludes zero.** The finding is not
-an artifact of three unexamined numbers.
+**The lift spans +16.1pp to +19.9pp. Every setting clears the pre-registered 5pp bar,
+and every confidence interval excludes zero.** The finding is not an artifact of three
+unexamined numbers.
+
+(Seven distinct configurations, shown as nine rows: the published setting sits on all
+three axes at once, so it appears in each block and is run once.)
 
 The three knobs are not equally important, and the reasons are worth separating:
 
@@ -374,7 +377,7 @@ uv pip install -e ".[dev]"
 # credentials — needed only for the data pull, not for the tests
 cp .env.example .env      # then paste your own Socrata app token into it
 
-.venv/bin/python -m pytest                      # 241 tests, no network or token needed
+.venv/bin/python -m pytest                      # 249 tests, no network or token needed
 .venv/bin/python scripts/pull_snapshots.py      # data/raw/<date>/*.parquet + manifest.json
 .venv/bin/python -m src.pipeline                # the headline, from the snapshot
 .venv/bin/python scripts/radius_sensitivity.py  # does the headline survive other radii?
@@ -421,7 +424,7 @@ a story.
 - **No general claim that Empirical Bayes beats counting by 18 points.** The lift is
   2.1pp where both methods have crash history to work with. See
   [the N-sweep](#the-number-that-keeps-that-honest).
-- **No claim that +18.4 is radius-free.** Across the nine settings swept, the lift runs
+- **No claim that +18.4 is radius-free.** Across the seven settings swept, the lift runs
   from +16.1pp to +19.9pp, and about 2pp per 50 ft of that depends on where the boundary
   between "at an intersection" and "mid-block" is drawn. Every setting clears the bar, so
   the finding holds; the decimal is a measurement at one defensible choice, not a
@@ -502,7 +505,7 @@ whether it is worth wrapping in a tool.
 | | |
 |---|---|
 | ✅ Scope and method settled | Office-hours design review, eng review (7 findings, all folded in) |
-| ✅ Pipeline built and tested | Snapshot pull, universe, features, SPF, EB, backtest. 241 tests green, run in CI on 3.11 and 3.12 |
+| ✅ Pipeline built and tested | Snapshot pull, universe, features, SPF, EB, backtest. 249 tests green, run in CI on 3.11 and 3.12 |
 | ✅ Run against real data | Snapshot 2026-08-13, result above, one earlier run discarded |
 | ✅ Sensitivity to the join radii | All three swept; see below. The headline does not turn on them |
 | ⏭ Next | Independent re-derivation; SPF window aligned to the holdout |

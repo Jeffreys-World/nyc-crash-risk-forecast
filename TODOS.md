@@ -3,13 +3,13 @@
 Deferred work, with enough context to pick it up cold.
 
 **State as of 2026-08-13:** Approach A is done and both P1 items are closed. The pipeline
-runs end to end on real data (snapshot `2026-08-13`), 241 tests green in CI on Python
+runs end to end on real data (snapshot `2026-08-13`), 249 tests green in CI on Python
 3.11 and 3.12, and the backtest produced a published result: R1 48.7% / R2 64.1% /
 R3 82.5%, lift +18.4pp with a 95% CI of [+17.5, +19.3].
 
 Two things changed on 2026-08-13 that affect how the rest of this list should be read:
 
-- **The result survived the radius sweep.** Lift runs +16.1pp to +19.9pp across the nine
+- **The result survived the radius sweep.** Lift runs +16.1pp to +19.9pp across the seven
   settings tested, all clearing the pre-registered bar. The headline is not an artifact
   of three unexamined distances. But it is not radius-free either, and the intersection
   radius is worth ±2pp per 50 ft — anything downstream that quotes a single number should
