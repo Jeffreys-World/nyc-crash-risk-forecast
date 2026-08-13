@@ -1,0 +1,93 @@
+{
+  "stratum_units": 206321,
+  "stratum_holdout_casualties": 7408.0,
+  "dispersion": {
+    "corridor": 5.704696484221117,
+    "intersection": 2.59507661259646
+  },
+  "eb_ceiling_1_over_k": {
+    "corridor": 0.17529416381150972,
+    "intersection": 0.3853450781167755
+  },
+  "random_draws": 2000,
+  "seed": 20260813,
+  "random_baseline": {
+    "100": {
+      "mean_captured": 3.573,
+      "mean_pp": 0.04823164146868251,
+      "p95_captured": 8.0,
+      "p95_pp": 0.1079913606911447,
+      "max_captured": 13.0
+    },
+    "500": {
+      "mean_captured": 17.839,
+      "mean_pp": 0.24080723542116628,
+      "p95_captured": 27.0,
+      "p95_pp": 0.3644708423326134,
+      "max_captured": 40.0
+    },
+    "2000": {
+      "mean_captured": 71.944,
+      "mean_pp": 0.9711663066954644,
+      "p95_captured": 90.0,
+      "p95_pp": 1.214902807775378,
+      "max_captured": 108.0
+    }
+  },
+  "results": [
+    {
+      "budget": 100,
+      "ordering": "eb_estimate",
+      "captured": 47.0,
+      "capture_pp": 0.6344492440604752,
+      "n_corridors": 0,
+      "n_intersections": 100,
+      "boundary_tie_block": 14
+    },
+    {
+      "budget": 100,
+      "ordering": "p_pct_within_type",
+      "captured": 21.0,
+      "capture_pp": 0.28347732181425483,
+      "n_corridors": 65,
+      "n_intersections": 35,
+      "boundary_tie_block": 1
+    },
+    {
+      "budget": 500,
+      "ordering": "eb_estimate",
+      "captured": 248.0,
+      "capture_pp": 3.347732181425486,
+      "n_corridors": 0,
+      "n_intersections": 500,
+      "boundary_tie_block": 11
+    },
+    {
+      "budget": 500,
+      "ordering": "p_pct_within_type",
+      "captured": 129.0,
+      "capture_pp": 1.7413606911447084,
+      "n_corridors": 337,
+      "n_intersections": 163,
+      "boundary_tie_block": 1
+    },
+    {
+      "budget": 2000,
+      "ordering": "eb_estimate",
+      "captured": 721.0,
+      "capture_pp": 9.732721382289418,
+      "n_corridors": 0,
+      "n_intersections": 2000,
+      "boundary_tie_block": 1
+    },
+    {
+      "budget": 2000,
+      "ordering": "p_pct_within_type",
+      "captured": 514.0,
+      "capture_pp": 6.938444924406047,
+      "n_corridors": 1286,
+      "n_intersections": 714,
+      "boundary_tie_block": 188
+    }
+  ]
+}
