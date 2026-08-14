@@ -55,3 +55,17 @@ jobs:
       # test that starts skipping for some other reason is visible rather than silent.
       - name: Test
         run: .venv/bin/python -m pytest -rs
+
+      # The published headline, rebuilt from the committed per-unit frame by code that
+      # imports nothing from `src/`. It needs no snapshot and no network — the frame is in
+      # the repo — so the check that used to require a 6-minute data pull now runs on
+      # every push, on both interpreters.
+      #
+      # Running it in the matrix is deliberate. Every sum below the surface is over
+      # integer-valued casualties, so the arithmetic is exact and the two interpreters
+      # must agree to the last digit; if a numpy or pandas version ever moves one of these
+      # numbers, that is a finding, not noise.
+      #
+      # `--no-write` because CI checks the artifact, it does not author it.
+      - name: Re-derive the headline
+        run: .venv/bin/python scripts/rederive_headline.py --no-write

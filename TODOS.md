@@ -19,36 +19,17 @@ Two things changed on 2026-08-13 that affect how the rest of this list should be
   the "does it run anywhere else" question and leaves only the genuinely independent
   re-derivation open.
 
+**And on 2026-08-14 that last one closed too.** `scripts/rederive_headline.py` rebuilds all
+18 published quantities from a committed per-unit frame without importing `src`, and every
+one agrees — the bootstrap bounds included, to the last digit. Read the rest of this list
+knowing the scoring layer is now checked and the *spatial join is not*: everything below
+that touches geometry is still standing on one implementation.
+
 Ordered by what most threatens or most advances the published result.
 
 ---
 
-## P1 — Independent re-derivation of the headline
-
-**What:** Recompute the three capture rates from the committed `data/processed/`
-artifacts with a short standalone script that shares no code with `src/backtest.py`.
-
-**Why:** Promoted from P2, because it is now the *only* unclosed check on the number. The
-headline has been re-verified twice — same code, same inputs, same answer — and once
-re-derived on a fresh snapshot and a rebuilt environment. None of that would catch a
-shared bug in `capture_rate` or `select_citywide_top_n`, which would reproduce perfectly
-every time and stay invisible.
-
-**Pros:** Cheap, and it closes the last "how do you know" question about the number.
-
-**Cons:** Only checks the scoring, not the upstream spatial join, which is where the
-harder bugs have actually been. Worth being explicit about that limit wherever the
-re-derivation is reported, or it will read as more assurance than it is.
-
-**Context:** `data/processed/run-summary.json` now carries a `join_radii` block, so a
-standalone re-derivation can assert it is scoring the same configuration rather than
-assuming it.
-
-**Depends on:** nothing.
-
----
-
-## P2 — Align the SPF window with the holdout so predictions are calibrated
+## P1 — Align the SPF window with the holdout so predictions are calibrated
 
 **What:** Fit the SPF on a 24-month trailing count to match the 24-month holdout, or
 scale predictions by the window ratio. Then add a calibration plot to the model card.
@@ -73,7 +54,11 @@ measured against: re-run `scripts/radius_sensitivity.py` afterwards and the lift
 should still sit near +16 to +20pp. If it moves, the window change did something to the
 ranking, not just to the scale.
 
-**Depends on:** ~~do the P1 sensitivity work first~~ — **done**. Ready to start.
+**Depends on:** ~~do the P1 sensitivity work first~~ — **done**. Ready to start. Note that
+`scripts/rederive_headline.py` now runs in CI against the committed artifacts, so a window
+change that moves the ranking will fail the re-derivation until the artifacts are
+regenerated alongside it. That is the intended behaviour and not a reason to skip it: the
+two have to move together or the repo is quoting a headline no committed file supports.
 
 ---
 
@@ -159,11 +144,14 @@ would have prevented casualties it may in fact have prevented by rebuilding the 
   interaction. The current sweep is one-at-a-time, which was the right first pass and
   cannot see interactions. Low expected value: the corridor join distance moves the lift
   by 0.06pp on its own, so an interaction large enough to matter would be surprising.
-- **CI could assert the README's numbers against `run-summary.json`.** The workflow
-  currently runs lint and tests, both of which pass while the README quotes a stale
-  figure — which is exactly what happened to the test count, wrong at "203" until
-  2026-08-13. A dozen-line check that the headline percentages in the README match the
-  committed summary would close the whole class.
+- ~~**CI could assert the README's numbers against `run-summary.json`.**~~ **Done**
+  (2026-08-14), and it found the test count stale again — the README said 249 against 283
+  collected. `tests/test_published_numbers.py` anchors 40-odd published figures to
+  `run-summary.json` and `radius-sensitivity.csv`. What it still cannot check is any
+  number the pipeline does not write down: the 7,408 casualties at zero-history units, the
+  1,947 crashes beyond the join distance, the 21,576 treated units in the R1 split. Those
+  live only in a log line. Widening `RunSummary` is the way to close them, one field at a
+  time, as each becomes load-bearing enough to be worth a schema change.
 
 ---
 
@@ -222,8 +210,20 @@ would have prevented casualties it may in fact have prevented by rebuilding the 
   join radii as well, so a full sweep leaves seven. By design, so a rebuild never silently
   reuses stale units, but nothing prunes old ones. Add a `--prune` flag or a note in the
   README.
-- **`run-summary.json` is written before `top-50-ranked.csv`.** If the CSV step fails the
-  summary is already on disk and looks complete. Write both, then move them into place.
+- **`scored-units.parquet` is 3.6 MB of binary, rewritten whole on every pipeline run.**
+  A decision, not an oversight: it is what lets the re-derivation and CI check the headline
+  from a clone with nothing pulled, and that was worth more than a lean history. The cost
+  is real though — every re-run that moves a float in the 13th digit costs another 3.6 MB
+  of git objects, and floats do move in the 13th digit between environments. Revisit if the
+  pipeline starts running often. The same columns as CSV measure 19.3 MB, so parquet is
+  already the cheap option, and dropping `spf_prediction` would save little while giving up
+  the only independent check on the EB blend.
+- ~~**`run-summary.json` is written before `top-50-ranked.csv`.**~~ **Done** (2026-08-14).
+  All three artifacts are built, then moved into place by `_write_artifacts`. What is left
+  is the part `os.replace` cannot give: atomicity *across* the set. A crash between two
+  moves still leaves a mixed directory, which is why the re-derivation cross-checks the
+  snapshot and radii stamped inside `scored-units.parquet` against the summary rather than
+  assuming the three files came from one run.
 
 ---
 
@@ -237,6 +237,28 @@ would have prevented casualties it may in fact have prevented by rebuilding the 
 ---
 
 ## Done
+
+- **Independent re-derivation of the headline** (2026-08-14). `scripts/rederive_headline.py`
+  rebuilds all 18 published quantities from `data/processed/scored-units.parquet` in code
+  that imports nothing from `src/`; `tests/test_rederive.py` asserts that independence by
+  parsing the script's imports, since the one edit that would silently end it is a
+  convenience import. Everything agrees, bootstrap bounds to the last digit. Two things
+  came out of it that were not the point:
+
+  - **The scoring layer needed a committed artifact before it could be checked at all.**
+    `data/processed/` held only summaries, so there was nothing for an independent script
+    to read. The per-unit frame is 3.5 MB for 220,033 units and now ships with the repo,
+    which is also what lets the check run in CI on a clone with no data pulled.
+  - **R2 draws 64.8% of its list out of a hat.** At N=38,909 the raw-count ranking exhausts
+    the 13,712 units it can order and fills the remaining 25,197 places from the block tied
+    at zero, decided by the tie-break hash. R3 draws 13. This is the README's central claim
+    arriving as a measurement, and it is the number the "B of N tied" disclosure in the
+    application should be built on.
+
+  **Limits, which are the important part:** it takes the spatial join, the trailing counts,
+  and the fitted dispersion as given. A wrong tie-break *rule* would be reproduced rather
+  than caught. What it closes is selection, ranking, capture rates, the interval, and the
+  EB blend.
 
 - **Sensitivity of the result to the three join radii** (2026-08-13). All three swept
   one-at-a-time by `scripts/radius_sensitivity.py`; results in

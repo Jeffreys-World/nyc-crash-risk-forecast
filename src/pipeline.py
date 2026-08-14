@@ -15,12 +15,15 @@ import argparse
 import hashlib
 import json
 import logging
+import os
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
 import geopandas as gpd
 import pandas as pd
+import pyarrow as pa
+import pyarrow.parquet as pq
 from shapely import from_wkt
 
 from src.backtest import (
@@ -64,6 +67,31 @@ HOLDOUT_END = pd.Timestamp(f"{HOLDOUT_YEARS[1] + 1}-01-01")
 # Site characteristics, not crash history. See SPF_PREDICTORS in src/config.py for why
 # the crash-derived features that were here on the 2026-08-12 run are gone.
 PREDICTORS = list(SPF_PREDICTORS)
+
+# The per-unit frame `scripts/rederive_headline.py` reads.
+#
+# Ten columns of the units frame's thirty-five: exactly what the scoring layer touches,
+# and nothing it does not. That is what makes the file small enough to commit — under
+# 4 MB for 220,033 units against 8.3 MB for the full cached frame — while still being the
+# *complete* input to every number in run-summary.json. A re-derivation that had to be
+# handed a subset of the inputs would be checking a subset of the claim.
+#
+# `spf_prediction` is here even though no selection ranks on it, because it is what lets
+# the re-derivation rebuild `eb_estimate` from the HSM formula rather than trusting the
+# column. Without it the blend — the one piece of arithmetic the whole method turns on —
+# would be the one thing an independent check could not check.
+SCORED_UNITS_COLUMNS = (
+    "unit_id",
+    "unit_type",
+    "borough",
+    "casualties_36mo",
+    "holdout_casualties",
+    "spf_prediction",
+    "eb_estimate",
+    "is_priority",
+    "treated",
+    "treatment_date",
+)
 
 
 @dataclass
@@ -280,6 +308,98 @@ def build_scored_units(
     return units, stats
 
 
+def scored_units_frame(scored: pd.DataFrame) -> pd.DataFrame:
+    """The committed per-unit frame: the scoring layer's inputs, and only those."""
+    missing = [c for c in SCORED_UNITS_COLUMNS if c not in scored.columns]
+    if missing:
+        # Unlike the top-50 CSV below, this one is not written defensively. A frame
+        # missing a column is a frame the re-derivation cannot check, and shipping a
+        # partial one would let the guard pass while covering less than it claims.
+        raise KeyError(
+            f"scored frame is missing {missing}; the re-derivation artifact needs every "
+            f"column in SCORED_UNITS_COLUMNS. Rebuild with --no-cache."
+        )
+    return scored[list(SCORED_UNITS_COLUMNS)].copy()
+
+
+def _write_artifacts(
+    summary: RunSummary, scored: pd.DataFrame, processed_dir: Path = PROCESSED_DIR
+) -> list[Path]:
+    """Write the three committed artifacts, staging each before it replaces the last.
+
+    Staged because these three files are read as one record. `run-summary.json` was
+    previously written first and the ranked CSV second, so a failure in between left a
+    complete-looking summary on disk next to a stale CSV describing a different run —
+    and now a stale per-unit frame too, which is worse: the re-derivation would compare
+    one run's units against another run's headline and report a mismatch that is really
+    a half-finished write. Everything is built, then everything is moved.
+
+    `os.replace` is atomic per file, not across the set, so a crash mid-move can still
+    leave a mixed directory. Closing that properly needs the snapshot and radii the
+    re-derivation already cross-checks between the frame's metadata and the summary,
+    which is why that check exists rather than being assumed away here.
+    """
+    processed_dir.mkdir(parents=True, exist_ok=True)
+    staged: list[tuple[Path, Path]] = []
+
+    summary_tmp = processed_dir / "run-summary.json.tmp"
+    summary_tmp.write_text(json.dumps(asdict(summary), indent=2, default=str) + "\n")
+    staged.append((summary_tmp, processed_dir / "run-summary.json"))
+
+    # Provenance travels *inside* the parquet, not beside it. A per-unit frame that does
+    # not say which snapshot and which radii produced it cannot be told apart from one
+    # built at 150 ft in a directory whose summary says 100, and that is precisely the
+    # stale-intermediate failure this project has already had once.
+    frame = scored_units_frame(scored)
+    table = pa.Table.from_pandas(frame, preserve_index=False)
+    table = table.replace_schema_metadata(
+        {
+            **(table.schema.metadata or {}),
+            b"snapshot_date": summary.snapshot_date.encode(),
+            b"join_radii": json.dumps(summary.join_radii).encode(),
+            b"dispersion": json.dumps(summary.dispersion).encode(),
+            b"universe_units": str(summary.universe_units).encode(),
+            b"citywide_n": str(summary.citywide_n).encode(),
+            b"produced_by": b"src.pipeline.run",
+        }
+    )
+    units_tmp = processed_dir / "scored-units.parquet.tmp"
+    pq.write_table(table, units_tmp, compression="zstd")
+    staged.append((units_tmp, processed_dir / "scored-units.parquet"))
+
+    # Selected defensively: an older cached units parquet may predate a carried column,
+    # and losing the ranked CSV to a KeyError after a multi-minute fit is a poor trade.
+    wanted = [
+        "unit_id",
+        "unit_type",
+        "borough",
+        "full_street_name",
+        "rw_type",
+        "eb_estimate",
+        "casualties_36mo",
+        "holdout_casualties",
+        "is_priority",
+        "treated",
+    ]
+    available = [c for c in wanted if c in scored.columns]
+    missing = [c for c in wanted if c not in scored.columns]
+    if missing:
+        log.warning(
+            "ranked output is missing %s - rebuild with --no-cache to pick them up",
+            ", ".join(missing),
+        )
+    ranked_tmp = processed_dir / "top-50-ranked.csv.tmp"
+    scored.nlargest(50, "eb_estimate")[available].to_csv(ranked_tmp, index=False)
+    staged.append((ranked_tmp, processed_dir / "top-50-ranked.csv"))
+
+    written: list[Path] = []
+    for tmp, final in staged:
+        os.replace(tmp, final)
+        log.info("wrote %s", final)
+        written.append(final)
+    return written
+
+
 def run(
     snapshot: Path | None = None,
     use_cache: bool = True,
@@ -388,35 +508,7 @@ def run(
         log.info("write_artifacts=False: leaving %s untouched", PROCESSED_DIR)
         return summary
 
-    PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
-    out = PROCESSED_DIR / "run-summary.json"
-    out.write_text(json.dumps(asdict(summary), indent=2, default=str) + "\n")
-    log.info("wrote %s", out)
-
-    # Selected defensively: an older cached units parquet may predate a carried column,
-    # and losing the ranked CSV to a KeyError after a multi-minute fit is a poor trade.
-    wanted = [
-        "unit_id",
-        "unit_type",
-        "borough",
-        "full_street_name",
-        "rw_type",
-        "eb_estimate",
-        "casualties_36mo",
-        "holdout_casualties",
-        "is_priority",
-        "treated",
-    ]
-    available = [c for c in wanted if c in scored.columns]
-    missing = [c for c in wanted if c not in scored.columns]
-    if missing:
-        log.warning(
-            "ranked output is missing %s - rebuild with --no-cache to pick them up",
-            ", ".join(missing),
-        )
-    ranked = scored.nlargest(50, "eb_estimate")[available]
-    ranked.to_csv(PROCESSED_DIR / "top-50-ranked.csv", index=False)
-
+    _write_artifacts(summary, scored)
     return summary
 
 

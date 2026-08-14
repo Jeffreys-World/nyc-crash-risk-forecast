@@ -25,6 +25,12 @@ Only **13,712 of 220,033 units (6.2%)** had a single pedestrian casualty in the 
 cannot order them at all — it is picking at random. Those tied-at-zero locations went on
 to produce **7,408 casualties, 41% of everything that happened in 2024–2025.**
 
+"Picking at random" is literal here, and it is measurable. Every ranking below breaks ties
+on a hash of the location's id, so at DOT's list size the raw-count ranking exhausts the
+13,712 locations it can order and then draws the rest out of the hat:
+**25,197 of its 38,909 picks — 64.8% —** are decided by that hash rather than by any
+count. The Empirical Bayes ranking draws 13.
+
 A Safety Performance Function can order them, because it reads the road rather than the
 history.
 
@@ -330,8 +336,10 @@ numpy, and scipy. Every number below, and every number in the headline, came bac
 identical; the top-50 ranking is the same 50 units in the same order, with Empirical
 Bayes estimates differing by at most 4e-13. Two independent pulls agreeing to the row is
 weak evidence about the *method* and strong evidence about the *pipeline*: nothing in it
-depends on the machine it ran on. It is not the independent re-derivation still listed in
-[TODOS.md](TODOS.md) — that needs code that shares nothing with `src/backtest.py`.
+depends on the machine it ran on. What it is not is a check on the scoring code, since it
+runs that code — that is
+[the re-derivation's job](#the-check-that-does-not-go-through-the-pipeline), and it is
+now done.
 
 | | |
 |---|---:|
@@ -359,8 +367,10 @@ borough gap this project descends from, and for a geometry-based model it is the
 one: a crash with no latitude cannot attach to any street, so it is invisible here. It is
 counted, not hidden.
 
-Raw snapshots are gitignored. The small aggregated intermediate is committed so the headline
-is checkable without a full re-pull.
+Raw snapshots are gitignored. The small aggregated intermediates are committed so the
+headline is checkable without a full re-pull — including
+[`scored-units.parquet`](data/processed/), the per-unit scoring inputs for all 220,033
+units, which is what makes the re-derivation below runnable from a clone.
 
 ---
 
@@ -377,11 +387,15 @@ uv pip install -e ".[dev]"
 # credentials — needed only for the data pull, not for the tests
 cp .env.example .env      # then paste your own Socrata app token into it
 
-.venv/bin/python -m pytest                      # 249 tests, no network or token needed
+.venv/bin/python -m pytest                      # 283 tests, no network or token needed
+.venv/bin/python scripts/rederive_headline.py   # re-check the headline, no pull needed
 .venv/bin/python scripts/pull_snapshots.py      # data/raw/<date>/*.parquet + manifest.json
 .venv/bin/python -m src.pipeline                # the headline, from the snapshot
 .venv/bin/python scripts/radius_sensitivity.py  # does the headline survive other radii?
 ```
+
+The second line runs against the committed artifacts, so it works on a fresh clone before
+any data is pulled. See [below](#the-check-that-does-not-go-through-the-pipeline).
 
 On Windows the interpreter is at `.venv/Scripts/python.exe`; everything else is the same.
 
@@ -403,6 +417,35 @@ before anyone spends an API call.
 Cloning this repo, running the pull, and running the pipeline should then reproduce the
 headline number exactly. That reproduction path is the only real proof the result is not
 a story.
+
+### The check that does not go through the pipeline
+
+Reproduction is not verification, and this repo spent a while confusing the two. The
+headline had been reproduced three times — re-run, re-pulled a day later, re-run on a
+rebuilt environment with newer pandas and numpy — and **not one of those checks could have
+caught the bug it was meant to.** Every one of them ran `src/backtest.py`. A wrong
+`capture_rate` or a wrong top-N selection reproduces perfectly, on every machine, forever.
+
+So `scripts/rederive_headline.py` goes around it. It reads
+[`data/processed/scored-units.parquet`](data/processed/) — the per-unit inputs to the
+scoring layer — and rebuilds every number in `run-summary.json` from scratch, in code that
+imports nothing from `src/`. Different selection mechanism, different capture arithmetic,
+different bootstrap formulation. `tests/test_rederive.py` asserts the independence
+statically, by parsing the script's imports, because the one edit that would quietly end
+it is an `import` added for convenience.
+
+**All 18 published quantities re-derive** — the three citywide capture rates, the lift,
+both bootstrap bounds to the last digit, both selection regimes, the treated/untreated
+split, and the Empirical Bayes blend rebuilt from `spf_prediction` and the fitted
+dispersion. Full table in [`rederivation.md`](data/processed/rederivation.md); it runs in
+CI on every push, on both interpreters.
+
+**What it does not check matters as much as what it does.** It takes the spatial join as
+given — which unit each crash landed on — and that is where this project's harder bugs
+have actually been. It takes the trailing counts as given. It takes the fitted dispersion
+from the summary rather than refitting. What it closes is the scoring layer: selection,
+ranking, tie-breaking, capture rates, the interval, and the blend. That was the layer the
+headline is a direct statement about, and it was the one with no independent check on it.
 
 ---
 
@@ -505,10 +548,11 @@ whether it is worth wrapping in a tool.
 | | |
 |---|---|
 | ✅ Scope and method settled | Office-hours design review, eng review (7 findings, all folded in) |
-| ✅ Pipeline built and tested | Snapshot pull, universe, features, SPF, EB, backtest. 249 tests green, run in CI on 3.11 and 3.12 |
+| ✅ Pipeline built and tested | Snapshot pull, universe, features, SPF, EB, backtest. 283 tests green, run in CI on 3.11 and 3.12 |
 | ✅ Run against real data | Snapshot 2026-08-13, result above, one earlier run discarded |
 | ✅ Sensitivity to the join radii | All three swept; see below. The headline does not turn on them |
-| ⏭ Next | Independent re-derivation; SPF window aligned to the holdout |
+| ✅ Independently re-derived | 18 quantities rebuilt from the committed artifacts by code sharing nothing with the pipeline. [What that does and does not close](#the-check-that-does-not-go-through-the-pipeline) |
+| ⏭ Next | SPF window aligned to the holdout, so the model can carry a calibration claim |
 | ⏸ Gated | Streamlit page, budget slider, SHAP explainer (Approach B) |
 | ⏸ Gated | The named-streets counterfactual (Approach C) |
 | 📋 Deferred, written up | Traffic-volume exposure ([TODOS.md](TODOS.md)) |
