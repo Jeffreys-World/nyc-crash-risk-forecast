@@ -284,7 +284,12 @@ def test_the_quoted_test_count_is_the_real_one(readme):
     fixtures.
     """
     result = subprocess.run(
-        [sys.executable, "-m", "pytest", "--collect-only", "-p", "no:cacheprovider"],
+        # `-o addopts=` clears the ini options for the child run. Without it this check
+        # depends on pyproject's `-q`: at one level of quiet pytest still prints the
+        # "N tests collected" total, at two it prints per-file counts and no total, so
+        # adding a `-q` to addopts would break a test about the README.
+        [sys.executable, "-m", "pytest", "--collect-only", "-o", "addopts=",
+         "-p", "no:cacheprovider"],
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,
